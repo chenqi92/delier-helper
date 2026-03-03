@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "软著代码生成器",
+  "productName": "交付助手",
   "version": "0.1.2",
   "identifier": "com.ranzhu.soft-copyright-generator",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "软著代码生成器",
+        "title": "交付助手",
         "width": 1280,
         "height": 860,
         "minWidth": 1000,
