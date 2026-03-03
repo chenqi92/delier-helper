@@ -84,6 +84,32 @@
           </div>
         </div>
 
+        <!-- 显示设置 -->
+        <div class="card" v-if="parseResult">
+          <div class="card-header">
+            <h3><Settings :size="14" /> 显示设置</h3>
+          </div>
+          <div class="card-body" style="display:flex;flex-direction:column;gap:8px;">
+            <div class="setting-row">
+              <span class="setting-label">自定义前缀</span>
+              <input
+                type="text"
+                v-model="customPrefix"
+                class="setting-input"
+                placeholder="如 /api/v1"
+              />
+            </div>
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="groupByController" />
+              按 Controller 分组
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" v-model="showModulePath" />
+              显示模块路径前缀
+            </label>
+          </div>
+        </div>
+
         <!-- 模块筛选 -->
         <div class="card" v-if="parseResult">
           <div class="card-header">
@@ -114,22 +140,15 @@
                 v-for="(mod, idx) in docModules"
                 :key="mod.id"
                 class="doc-module-item"
-                draggable="true"
-                @dragstart="onDragStart(idx, $event)"
-                @dragover.prevent="onDragOver(idx, $event)"
-                @dragleave="onDragLeave($event)"
-                @drop="onDrop(idx, $event)"
-                @dragend="dragIdx = -1; canDrag = false"
-                :class="{'drag-over': dragOverIdx === idx && dragIdx !== idx}"
               >
-                <label class="checkbox-label" style="flex:1;" @mousedown.stop>
+                <label class="checkbox-label" style="flex:1;">
                   <input type="checkbox" v-model="mod.enabled" />
                   {{ mod.label }}
                 </label>
-                <span
-                  class="drag-handle"
-                  @mousedown="canDrag = true"
-                ><GripVertical :size="14" /></span>
+                <div class="reorder-btns">
+                  <button class="reorder-btn" :disabled="idx === 0" @click="moveModule(idx, -1)" title="上移">▲</button>
+                  <button class="reorder-btn" :disabled="idx === docModules.length - 1" @click="moveModule(idx, 1)" title="下移">▼</button>
+                </div>
               </div>
             </div>
           </div>
@@ -155,14 +174,15 @@
           </div>
 
           <div class="api-preview-scroll">
-            <div v-for="mod in visibleModules" :key="mod.className" class="api-module-group">
+            <div v-for="(mod, modIdx) in displayModules" :key="mod.className" class="api-module-group">
               <div class="api-module-header" @click="toggleModuleExpand(mod.className)">
                 <div style="display:flex;align-items:center;gap:8px;">
                   <ChevronRight :size="14" :class="{'chevron-expanded': expandedModules.has(mod.className)}" />
+                  <span class="api-module-index">{{ modIdx + 1 }}</span>
                   <span class="api-module-name">{{ mod.name }}</span>
                   <span class="badge badge-primary">{{ mod.apis.length }}</span>
                 </div>
-                <span style="font-size:11px;color:var(--text-muted);">{{ mod.file }}</span>
+                <span v-if="mod.file" style="font-size:11px;color:var(--text-muted);">{{ mod.file }}</span>
               </div>
 
               <div v-if="expandedModules.has(mod.className)" class="api-module-body">
@@ -173,8 +193,9 @@
                 >
                   <div class="api-item-header" @click="toggleApiExpand(mod.className + '.' + api.methodName)">
                     <div style="display:flex;align-items:center;gap:8px;">
+                      <span class="api-index">{{ modIdx + 1 }}.{{ idx + 1 }}</span>
                       <span :class="'method-badge method-' + api.method.toLowerCase()">{{ api.method }}</span>
-                      <span class="api-path">{{ api.path }}</span>
+                      <span class="api-path">{{ api.displayPath || api.path }}</span>
                     </div>
                     <span class="api-summary-text">{{ api.summary }}</span>
                   </div>
@@ -287,11 +308,81 @@
               </div>
             </div>
 
-            <div v-if="visibleModules.length < filteredModules.length" class="load-more-bar">
-              <button class="btn btn-secondary" @click="showModuleCount += 30">
-                加载更多（还有 {{ filteredModules.length - visibleModules.length }} 个模块）
-              </button>
+            <!-- 扁平模式：直接列出 API -->
+            <div v-if="!groupByController" class="flat-api-list">
+              <div
+                v-for="(api, idx) in flatApis"
+                :key="idx"
+                class="api-item flat-api-item"
+              >
+                <div class="api-item-header" @click="toggleApiExpand('__flat__.' + idx)">
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="api-index">{{ idx + 1 }}</span>
+                    <span :class="'method-badge method-' + api.method.toLowerCase()">{{ api.method }}</span>
+                    <span class="api-path">{{ api.displayPath || api.path }}</span>
+                  </div>
+                  <span class="api-summary-text">{{ api.summary }}</span>
+                </div>
+
+                <div v-if="expandedApis.has('__flat__.' + idx)" class="api-item-detail">
+                  <template v-for="dm in enabledDocModules" :key="dm.id">
+                    <div v-if="dm.id === 'method'" class="detail-row">
+                      <span class="detail-label">请求方式</span>
+                      <span :class="'method-badge method-' + api.method.toLowerCase()">{{ api.method }}</span>
+                    </div>
+                    <div v-if="dm.id === 'path'" class="detail-row">
+                      <span class="detail-label">请求地址</span>
+                      <code class="detail-code">{{ api.displayPath || api.path }}</code>
+                    </div>
+                    <div v-if="dm.id === 'summary'" class="detail-row">
+                      <span class="detail-label">接口说明</span>
+                      <span
+                        :class="{'placeholder-text': checkPlaceholder(api.description)}"
+                        contenteditable="true"
+                        @blur="onApiDescEdit(api, $event)"
+                      >{{ api.description || '-' }}</span>
+                    </div>
+                    <template v-if="dm.id === 'params'">
+                      <div v-if="api.params.length > 0" class="detail-section">
+                        <div class="detail-label">请求参数</div>
+                        <table class="detail-table">
+                          <thead><tr><th>参数名</th><th>类型</th><th>必须</th><th>说明</th></tr></thead>
+                          <tbody>
+                            <tr v-for="p in api.params" :key="p.name">
+                              <td><code>{{ p.name }}</code></td><td>{{ p.type }}</td>
+                              <td><span :class="p.required ? 'tag-required' : 'tag-optional'">{{ p.required ? '是' : '否' }}</span></td>
+                              <td>{{ p.description || '-' }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </template>
+                    <template v-if="dm.id === 'response'">
+                      <div v-if="api.response && api.response.fields.length > 0" class="detail-section">
+                        <div class="detail-label">返回数据 ({{ api.response.type }})</div>
+                        <table class="detail-table">
+                          <thead><tr><th>参数名</th><th>类型</th><th>说明</th></tr></thead>
+                          <tbody>
+                            <tr v-for="f in api.response.fields" :key="f.name">
+                              <td><code>{{ f.name }}</code></td><td>{{ f.type }}</td><td>{{ f.description || '-' }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                    </template>
+                    <div v-if="dm.id === 'requestExample' && api.requestBody && api.requestBody.example" class="detail-section">
+                      <div class="detail-label">请求示例</div>
+                      <pre class="detail-json">{{ JSON.stringify(api.requestBody.example, null, 2) }}</pre>
+                    </div>
+                    <div v-if="dm.id === 'responseExample' && api.response && api.response.example" class="detail-section">
+                      <div class="detail-label">返回示例</div>
+                      <pre class="detail-json">{{ JSON.stringify(api.response.example, null, 2) }}</pre>
+                    </div>
+                  </template>
+                </div>
+              </div>
             </div>
+
           </div>
         </template>
       </main>
@@ -308,16 +399,14 @@ import { parseSpringBootProject, isPlaceholder } from '../core/api-doc/spring-bo
 import { renderMarkdown, renderDocx, DEFAULT_DOC_MODULES } from '../core/api-doc/api-doc-renderer.js'
 import {
   FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
-  Plug, Filter, Settings, ChevronRight, Scan, GripVertical
+  Plug, Filter, Settings, ChevronRight, Scan
 } from 'lucide-vue-next'
-
-const BATCH_SIZE = 30
 
 export default {
   name: 'ApiDocGenerator',
   components: {
     FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
-    Plug, Filter, Settings, ChevronRight, Scan, GripVertical
+    Plug, Filter, Settings, ChevronRight, Scan
   },
   inject: ['showToast'],
   data() {
@@ -333,10 +422,9 @@ export default {
       expandedModules: new Set(),
       expandedApis: new Set(),
       docModules: JSON.parse(JSON.stringify(DEFAULT_DOC_MODULES)),
-      dragIdx: -1,
-      dragOverIdx: -1,
-      canDrag: false,
-      showModuleCount: 30,
+      groupByController: true,
+      showModulePath: false,
+      customPrefix: '',
     }
   },
   computed: {
@@ -364,8 +452,51 @@ export default {
     enabledDocModules() {
       return this.docModules.filter(m => m.enabled)
     },
-    visibleModules() {
-      return this.filteredModules.slice(0, this.showModuleCount)
+    displayModules() {
+      const prefix = this.customPrefix ? this.customPrefix.replace(/\/+$/, '') : ''
+      const addPrefix = (path) => {
+        if (!prefix) return path
+        const p = path.startsWith('/') ? path : '/' + path
+        return (prefix + p).replace(/\/+/g, '/')
+      }
+      const stripPath = (name) => {
+        if (this.showModulePath) return name
+        return name.replace(/^\[.*?\]\s*/, '')
+      }
+
+      if (this.groupByController) {
+        return this.filteredModules.map(mod => ({
+          ...mod,
+          name: stripPath(mod.name),
+          apis: mod.apis.map(api => ({ ...api, displayPath: addPrefix(api.path) })),
+        }))
+      } else {
+        return []
+      }
+    },
+    flatApis() {
+      if (this.groupByController) return []
+      const prefix = this.customPrefix ? this.customPrefix.replace(/\/+$/, '') : ''
+      const addPrefix = (path) => {
+        if (!prefix) return path
+        const p = path.startsWith('/') ? path : '/' + path
+        return (prefix + p).replace(/\/+/g, '/')
+      }
+      const stripPath = (name) => {
+        if (this.showModulePath) return name
+        return name.replace(/^\[.*?\]\s*/, '')
+      }
+      const allApis = []
+      for (const mod of this.filteredModules) {
+        for (const api of mod.apis) {
+          allApis.push({
+            ...api,
+            displayPath: addPrefix(api.path),
+            _fromModule: stripPath(mod.name),
+          })
+        }
+      }
+      return allApis
     },
   },
   methods: {
@@ -447,9 +578,9 @@ export default {
 
         // 2. 分批读取内容
         const allFiles = []
-        for (let i = 0; i < javaFiles.length; i += BATCH_SIZE) {
-          const batch = javaFiles.slice(i, i + BATCH_SIZE)
-          const loaded = Math.min(i + BATCH_SIZE, javaFiles.length)
+        for (let i = 0; i < javaFiles.length; i += 50) {
+          const batch = javaFiles.slice(i, i + 50)
+          const loaded = Math.min(i + 50, javaFiles.length)
           this.addLog(`正在读取文件 (${loaded}/${javaFiles.length})...`)
           this.parsePercent = 5 + Math.round((loaded / javaFiles.length) * 15)
 
@@ -549,30 +680,15 @@ export default {
       this.expandedApis = s
     },
 
-    // ===== 文档模块拖拽排序 =====
-    onDragStart(idx, e) {
-      if (!this.canDrag) {
-        e.preventDefault()
-        return
-      }
-      this.dragIdx = idx
-      e.dataTransfer.effectAllowed = 'move'
-    },
-    onDragOver(idx, e) {
-      this.dragOverIdx = idx
-      e.dataTransfer.dropEffect = 'move'
-    },
-    onDragLeave(e) {
-      this.dragOverIdx = -1
-    },
-    onDrop(idx, e) {
-      e.preventDefault()
-      if (this.dragIdx === idx || this.dragIdx < 0) return
-      const moved = this.docModules.splice(this.dragIdx, 1)[0]
-      this.docModules.splice(idx, 0, moved)
-      this.docModules = [...this.docModules]
-      this.dragIdx = -1
-      this.dragOverIdx = -1
+    // ===== 文档模块排序 =====
+    moveModule(idx, direction) {
+      const newIdx = idx + direction
+      if (newIdx < 0 || newIdx >= this.docModules.length) return
+      const arr = [...this.docModules]
+      const tmp = arr[idx]
+      arr[idx] = arr[newIdx]
+      arr[newIdx] = tmp
+      this.docModules = arr
     },
 
     // ===== 导出 =====

@@ -52,14 +52,16 @@ export function renderMarkdown(parseResult, docModules) {
 
     lines.push('# 接口文档\n')
 
-    for (const mod of parseResult.modules) {
-        lines.push(`## ${mod.name}\n`)
+    for (let modIdx = 0; modIdx < parseResult.modules.length; modIdx++) {
+        const mod = parseResult.modules[modIdx]
+        lines.push(`## ${modIdx + 1}. ${mod.name}\n`)
         if (mod.basePath) {
             lines.push(`> 基础路径: \`${mod.basePath}\`\n`)
         }
 
-        for (const api of mod.apis) {
-            lines.push(`### ${api.summary}\n`)
+        for (let apiIdx = 0; apiIdx < mod.apis.length; apiIdx++) {
+            const api = mod.apis[apiIdx]
+            lines.push(`### ${modIdx + 1}.${apiIdx + 1} ${api.summary}\n`)
 
             for (const modId of enabledIds) {
                 switch (modId) {
@@ -194,9 +196,10 @@ export async function renderDocx(parseResult, docModules) {
         spacing: { after: 300 },
     }))
 
-    for (const mod of parseResult.modules) {
+    for (let modIdx = 0; modIdx < parseResult.modules.length; modIdx++) {
+        const mod = parseResult.modules[modIdx]
         children.push(new Paragraph({
-            children: [makeText(mod.name, { size: 32, bold: true })],
+            children: [makeText(`${modIdx + 1}. ${mod.name}`, { size: 32, bold: true })],
             heading: HeadingLevel.HEADING_1,
             spacing: { before: 400, after: 200 },
         }))
@@ -208,9 +211,10 @@ export async function renderDocx(parseResult, docModules) {
             }))
         }
 
-        for (const api of mod.apis) {
+        for (let apiIdx = 0; apiIdx < mod.apis.length; apiIdx++) {
+            const api = mod.apis[apiIdx]
             children.push(new Paragraph({
-                children: [makeText(api.summary, { size: 26, bold: true })],
+                children: [makeText(`${modIdx + 1}.${apiIdx + 1} ${api.summary}`, { size: 26, bold: true })],
                 heading: HeadingLevel.HEADING_2,
                 spacing: { before: 300, after: 150 },
             }))
