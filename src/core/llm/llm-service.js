@@ -529,8 +529,43 @@ export function buildDbDocPrompt(placeholders) {
 
 // ==================== 结果解析与回填 ====================
 
+/**
+ * 从 LLM 响应中提取 JSON（兼容 markdown 代码块包裹）
+ */
+function extractJsonFromResponse(text) {
+    if (!text || typeof text !== 'string') return null
+    let cleaned = text.trim()
+
+    // 去掉 markdown 代码块包裹：```json ... ``` 或 ``` ... ```
+    const codeBlockMatch = cleaned.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/)
+    if (codeBlockMatch) {
+        cleaned = codeBlockMatch[1].trim()
+    }
+
+    try {
+        return JSON.parse(cleaned)
+    } catch (e) {
+        // 尝试找到第一个 { 和最后一个 } 之间的内容
+        const start = cleaned.indexOf('{')
+        const end = cleaned.lastIndexOf('}')
+        if (start >= 0 && end > start) {
+            try {
+                return JSON.parse(cleaned.substring(start, end + 1))
+            } catch (e2) {
+                // ignore
+            }
+        }
+        console.error('JSON 提取失败:', cleaned.substring(0, 300))
+        return null
+    }
+}
+
 export function applyApiDocResults(responseText, placeholders) {
-    const parsed = JSON.parse(responseText)
+    const parsed = extractJsonFromResponse(responseText)
+    if (!parsed) {
+        console.error('API Doc LLM 返回无法解析为 JSON:', responseText?.substring(0, 300))
+        return { filled: 0, total: placeholders.length }
+    }
     const results = parsed.results || []
 
     const resultMap = new Map()
@@ -551,7 +586,11 @@ export function applyApiDocResults(responseText, placeholders) {
 }
 
 export function applyDbDocResults(responseText, placeholders, schema, commentOverrides) {
-    const parsed = JSON.parse(responseText)
+    const parsed = extractJsonFromResponse(responseText)
+    if (!parsed) {
+        console.error('DB Doc LLM 返回无法解析为 JSON:', responseText?.substring(0, 300))
+        return { filled: 0, total: placeholders.length, newOverrides: commentOverrides }
+    }
     const results = parsed.results || []
 
     const resultMap = new Map()

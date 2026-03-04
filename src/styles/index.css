@@ -902,13 +902,18 @@ select.form-input {
 }
 
 .btn-secondary {
-    background: var(--bg-tertiary, #374151) !important;
-    border-color: var(--border-color) !important;
-    color: var(--text-secondary) !important;
+    background: rgba(99, 102, 241, 0.15) !important;
+    border-color: var(--primary-500) !important;
+    color: var(--primary-300, #a5b4fc) !important;
 }
 
 .btn-secondary:hover {
-    background: var(--bg-elevated, #4b5563) !important;
+    background: rgba(99, 102, 241, 0.3) !important;
+}
+
+.btn-secondary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
 }
 
 .badge {
