@@ -110,3 +110,79 @@ pub fn read_files_content(files: Vec<ReadRequest>) -> ReadResult {
         error: None,
     }
 }
+
+// ==================== 数据库命令 ====================
+
+use crate::db_connector;
+
+#[derive(Debug, Serialize)]
+pub struct DbTestResult {
+    pub success: bool,
+    pub version: Option<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DbSchemaResult {
+    pub success: bool,
+    pub schema: Option<db_connector::DbSchema>,
+    pub error: Option<String>,
+}
+
+/// 测试数据库连接
+#[tauri::command]
+pub async fn db_test_connection(config: db_connector::DbConfig) -> DbTestResult {
+    match db_connector::test_connection(&config).await {
+        Ok(version) => DbTestResult {
+            success: true,
+            version: Some(version),
+            error: None,
+        },
+        Err(e) => DbTestResult {
+            success: false,
+            version: None,
+            error: Some(e),
+        },
+    }
+}
+
+/// 获取数据库结构
+#[tauri::command]
+pub async fn db_fetch_schema(config: db_connector::DbConfig) -> DbSchemaResult {
+    match db_connector::fetch_schema(&config).await {
+        Ok(schema) => DbSchemaResult {
+            success: true,
+            schema: Some(schema),
+            error: None,
+        },
+        Err(e) => DbSchemaResult {
+            success: false,
+            schema: None,
+            error: Some(e),
+        },
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct DbListResult {
+    pub success: bool,
+    pub databases: Vec<String>,
+    pub error: Option<String>,
+}
+
+/// 获取数据库列表
+#[tauri::command]
+pub async fn db_fetch_databases(config: db_connector::DbConfig) -> DbListResult {
+    match db_connector::fetch_databases(&config).await {
+        Ok(databases) => DbListResult {
+            success: true,
+            databases,
+            error: None,
+        },
+        Err(e) => DbListResult {
+            success: false,
+            databases: vec![],
+            error: Some(e),
+        },
+    }
+}

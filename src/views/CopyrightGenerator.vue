@@ -228,9 +228,14 @@
           <div class="card" style="flex:1;display:flex;flex-direction:column;">
             <div class="card-header">
               <h3><Eye :size="14" /> 代码预览</h3>
-              <button :class="['btn','btn-sm', config.selectedExtensions.length > 0 ? 'btn-primary' : 'btn-secondary']" @click="refreshPreview" :disabled="previewing || config.selectedExtensions.length===0">
-                <RefreshCw :size="14" v-if="!previewing" /> {{ previewing ? '加载中...' : '刷新预览' }}
-              </button>
+              <div style="display:flex;gap:6px;align-items:center;">
+                <button v-if="previewData" class="btn btn-secondary btn-sm" @click="reshufflePreview" :disabled="previewing" title="使用新的随机种子重新选择代码">
+                  <Shuffle :size="14" /> 换一批
+                </button>
+                <button :class="['btn','btn-sm', config.selectedExtensions.length > 0 ? 'btn-primary' : 'btn-secondary']" @click="refreshPreview" :disabled="previewing || config.selectedExtensions.length===0">
+                  <RefreshCw :size="14" v-if="!previewing" /> {{ previewing ? '加载中...' : '刷新预览' }}
+                </button>
+              </div>
             </div>
             <!-- 进度条 -->
             <div v-if="processing" class="progress-container">
@@ -241,11 +246,14 @@
               <div v-if="!previewData && !processing" class="tip" style="margin-bottom:12px;">
                 <Lightbulb :size="14" class="tip-icon" /><span>选择文件类型后点击"刷新预览"查看生成效果。</span>
               </div>
-              <div v-if="previewData" style="margin-bottom:12px;display:flex;gap:12px;flex-wrap:wrap;">
+              <div v-if="previewData" style="margin-bottom:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
                 <span class="badge badge-primary">总计 {{ fmt(previewData.totalLines) }} 行</span>
                 <span class="badge badge-success">共 {{ previewPages.length }} 页</span>
                 <span v-if="previewData.isTruncated" class="badge badge-warning">
                   已按比例截取{{ previewPages.length }}页
+                </span>
+                <span v-if="currentSeed" class="badge" style="background:var(--surface-100);color:var(--text-muted);font-size:11px;" :title="'种子编号，相同种子生成相同结果'">
+                  种子 #{{ currentSeed }}
                 </span>
               </div>
               <!-- Word 分页预览 -->
@@ -284,7 +292,7 @@ import { smartSortFiles } from '../core/file-sorter.js'
 import {
   FolderOpen, Save, Pin, Plus, X, FileText, Search,
   Lightbulb, Ban, Eraser, Eye, RefreshCw, Check, FileDown,
-  ChevronDown
+  ChevronDown, Shuffle
 } from 'lucide-vue-next'
 
 const NON_CODE_EXTS = ['.json','.yaml','.yml','.toml','.ini','.cfg','.conf','.md','.txt','.csv','.log','.xml','.svg']
@@ -308,7 +316,7 @@ export default {
   components: {
     FolderOpen, Save, Pin, Plus, X, FileText, Search,
     Lightbulb, Ban, Eraser, Eye, RefreshCw, Check, FileDown,
-    ChevronDown
+    ChevronDown, Shuffle
   },
   inject: ['showToast'],
   data() {
@@ -331,6 +339,7 @@ export default {
       previewData: null, previewLines: [],
       lastResult: null,
       dirResults: [],
+      currentSeed: null,
     }
   },
   computed: {
@@ -474,6 +483,8 @@ export default {
             if (result.lines.length > 0) {
               fileEntries.push({
                 name: fc.name || fc.relative_path,
+                relative_path: fc.relative_path || '',
+                ext: fc.ext || '',
                 lines: result.lines,
                 lineCount: result.lines.length,
               })
@@ -518,7 +529,12 @@ export default {
         const result = await this.processAllFiles()
         if (!result) { this.previewing = false; return }
 
-        const allocResult = allocateCodeByRatio(this.dirResults, this.config.linesPerPage, this.config.maxPages)
+        // 若还没有种子，生成一个初始种子
+        if (this.currentSeed == null) {
+          this.currentSeed = Date.now()
+        }
+
+        const allocResult = allocateCodeByRatio(this.dirResults, this.config.linesPerPage, this.config.maxPages, this.currentSeed)
         this.previewData = {
           totalLines: allocResult.lines.length,
           totalPages: allocResult.totalPages,
@@ -527,6 +543,29 @@ export default {
         }
         this.previewLines = allocResult.lines
         this.showToast('预览已刷新', 'success')
+      } catch (e) { this.showToast(String(e), 'error') }
+      this.previewing = false
+    },
+
+    // ===== 换一批 =====
+    async reshufflePreview() {
+      if (!this.dirResults || this.dirResults.length === 0) {
+        this.showToast('请先刷新预览', 'warning')
+        return
+      }
+      this.previewing = true
+      try {
+        // 生成新种子
+        this.currentSeed = Date.now()
+        const allocResult = allocateCodeByRatio(this.dirResults, this.config.linesPerPage, this.config.maxPages, this.currentSeed)
+        this.previewData = {
+          totalLines: allocResult.lines.length,
+          totalPages: allocResult.totalPages,
+          isTruncated: allocResult.isTruncated,
+          dirAllocations: allocResult.dirAllocations,
+        }
+        this.previewLines = allocResult.lines
+        this.showToast('已切换为新的代码组合', 'success')
       } catch (e) { this.showToast(String(e), 'error') }
       this.previewing = false
     },
@@ -560,7 +599,11 @@ export default {
         this.progressText = '正在生成 Word 文档...'
         this.processing = true; this.progress = 50
 
-        const allocResult = allocateCodeByRatio(this.dirResults, this.config.linesPerPage, this.config.maxPages)
+        // 使用当前种子生成（与预览一致）
+        if (this.currentSeed == null) {
+          this.currentSeed = Date.now()
+        }
+        const allocResult = allocateCodeByRatio(this.dirResults, this.config.linesPerPage, this.config.maxPages, this.currentSeed)
 
         const genResult = await generateDocxBuffer({
           softwareName: this.config.softwareName,

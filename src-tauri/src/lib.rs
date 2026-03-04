@@ -1,4 +1,5 @@
 mod commands;
+mod db_connector;
 mod scanner;
 
 use tauri::Manager;
@@ -13,6 +14,9 @@ pub fn run() {
             commands::scan_directory,
             commands::detect_file_types,
             commands::read_files_content,
+            commands::db_test_connection,
+            commands::db_fetch_schema,
+            commands::db_fetch_databases,
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {

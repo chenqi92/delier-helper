@@ -141,3 +141,59 @@ export function smartSortFiles(files) {
         return normalizePath(a.relative_path).localeCompare(normalizePath(b.relative_path))
     })
 }
+
+/**
+ * 基于种子的伪随机数生成器（mulberry32）
+ * 同一种子总是产生相同的随机序列，实现可复现的洗牌
+ */
+function seededRandom(seed) {
+    let s = seed | 0
+    return function () {
+        s = (s + 0x6D2B79F5) | 0
+        let t = Math.imul(s ^ (s >>> 15), 1 | s)
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+    }
+}
+
+/**
+ * 基于种子的确定性洗牌（Fisher-Yates）
+ *
+ * 策略：
+ * - 所有源代码文件（权重 < 850）统一洗牌
+ *   → 每次换一批从第一行就能看到完全不同的代码
+ * - 数据/测试文件（权重 >= 850）排在末尾，组内洗牌
+ *   → 避免非代码内容出现在前面
+ *
+ * @param {Array} files - 已排序的文件列表
+ * @param {number} seed - 随机种子
+ * @returns {Array} 洗牌后的文件列表
+ */
+export function shuffleWithSeed(files, seed) {
+    if (!files || files.length <= 1 || seed == null) return files
+
+    const rng = seededRandom(seed)
+
+    const codeFiles = []      // 所有源代码文件，全部参与洗牌
+    const tailFiles = []      // 数据/测试文件（排末尾）
+
+    for (const f of files) {
+        const w = getFileSortWeight(f.relative_path || '', f.name || '', f.ext || '')
+        if (w >= 850) {
+            tailFiles.push(f)
+        } else {
+            codeFiles.push(f)
+        }
+    }
+
+    // Fisher-Yates 洗牌
+    const shuffle = (arr) => {
+        for (let i = arr.length - 1; i > 0; i--) {
+            const j = Math.floor(rng() * (i + 1));
+            [arr[i], arr[j]] = [arr[j], arr[i]]
+        }
+        return arr
+    }
+
+    return [...shuffle(codeFiles), ...shuffle(tailFiles)]
+}

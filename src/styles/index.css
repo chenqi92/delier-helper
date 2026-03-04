@@ -345,6 +345,15 @@ body {
     color: var(--text-muted);
 }
 
+select.form-input {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 8px center;
+    padding-right: 28px;
+    cursor: pointer;
+}
+
 .form-row {
     display: flex;
     gap: 8px;
@@ -388,6 +397,13 @@ body {
 .btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+    transform: none;
+}
+
+.btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
     transform: none;
 }
 
@@ -1563,4 +1579,258 @@ body {
     color: #d35400;
     background: rgba(230, 126, 34, 0.06);
     border-color: rgba(230, 126, 34, 0.3);
+}
+
+/* ========== 数据库文档生成器 ========== */
+
+/* 数据库类型选择按钮组 */
+.db-type-btns {
+    display: flex;
+    gap: 4px;
+}
+
+.db-type-btn {
+    flex: 1;
+    padding: 6px 12px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 500;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    text-align: center;
+}
+
+.db-type-btn:hover {
+    border-color: var(--border-hover);
+    color: var(--text-primary);
+}
+
+.db-type-btn.active {
+    background: linear-gradient(135deg, var(--primary-600), var(--primary-500));
+    border-color: var(--primary-500);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+}
+
+/* 连接状态圆点 */
+.conn-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.conn-dot.connected {
+    background: var(--success-500);
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+    animation: pulse-dot 2s ease infinite;
+}
+
+.conn-dot.error {
+    background: var(--danger-500);
+    box-shadow: 0 0 6px rgba(239, 68, 68, 0.5);
+}
+
+@keyframes pulse-dot {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
+/* 表筛选列表 */
+.db-table-filter-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+/* 列容器 */
+.db-columns-container {
+    padding: 8px 12px;
+}
+
+.db-columns-container .detail-table {
+    font-size: 12px;
+}
+
+.db-columns-container .detail-table th {
+    font-size: 10px;
+    padding: 5px 8px;
+}
+
+.db-columns-container .detail-table td {
+    padding: 4px 8px;
+    font-size: 12px;
+}
+
+/* 子区域（索引、外键） */
+.db-sub-section {
+    padding: 8px 12px;
+    border-top: 1px solid var(--border-color);
+}
+
+.db-sub-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--primary-300);
+    margin-bottom: 6px;
+}
+
+/* 外键项 */
+.db-fk-item {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    font-size: 12px;
+    border-radius: 4px;
+    margin-bottom: 2px;
+    transition: background 0.15s ease;
+}
+
+.db-fk-item:hover {
+    background: var(--bg-hover);
+}
+
+.db-fk-item code {
+    color: var(--primary-300);
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+}
+
+/* 表注释文本 */
+.db-table-comment-text {
+    font-size: 12px;
+    color: var(--text-muted);
+    max-width: 260px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ER 图 */
+.er-diagram-wrap {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.er-diagram-header {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.er-diagram-body {
+    flex: 1;
+    overflow: hidden;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 400px;
+    position: relative;
+    user-select: none;
+}
+
+.er-diagram-inner {
+    display: inline-block;
+}
+
+.er-diagram-body svg {
+    max-width: none !important;
+    height: auto;
+}
+
+/* 视图切换按钮组 */
+.db-view-switcher {
+    display: flex;
+    gap: 0;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+}
+
+.db-view-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-right: 1px solid var(--border-color);
+}
+
+.db-view-btn:last-child {
+    border-right: none;
+}
+
+.db-view-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.db-view-btn.active {
+    background: var(--primary-600);
+    color: #fff;
+}
+
+/* 缩放按钮 */
+.btn-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+}
+
+.btn-icon:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+}
+
+/* 浅色模式适配 */
+.light-theme .db-type-btn {
+    background: #f3f4f6;
+    border-color: #d0d7de;
+}
+
+.light-theme .db-type-btn.active {
+    background: linear-gradient(135deg, var(--primary-600), var(--primary-500));
+}
+
+.light-theme .er-diagram-body {
+    background: #fafbfc;
 }
