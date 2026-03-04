@@ -1,5 +1,11 @@
 <template>
   <div style="display:flex;flex-direction:column;height:100%;">
+    <GuideTour
+      :steps="guideSteps"
+      :enabled="guideVisible"
+      :conditions="guideConditions"
+      @finish="guideVisible = false"
+    />
     <!-- 头部操作栏 -->
     <div class="view-header">
       <div class="header-actions">
@@ -16,7 +22,7 @@
             <h3><Bot :size="14" /> 模型配置</h3>
           </div>
           <div class="card-body" style="padding:6px;">
-            <button class="ai-add-btn" @click="addNewConfig">
+            <button class="ai-add-btn" @click="addNewConfig" data-guide="ai-add">
               <Plus :size="14" /> 新增配置
             </button>
 
@@ -88,7 +94,7 @@
               </div>
 
               <!-- API Key -->
-              <div class="form-group">
+              <div class="form-group" data-guide="ai-apikey">
                 <label class="form-label">API Key</label>
                 <div style="display:flex;gap:6px;">
                   <input :type="showKey ? 'text' : 'password'" class="form-input" style="flex:1;"
@@ -130,7 +136,7 @@
                   <Wifi v-else :size="14" />
                   {{ testing ? '测试中...' : '测试连接' }}
                 </button>
-                <button class="btn btn-primary btn-sm" @click="save" :disabled="!isFormValid">
+                <button class="btn btn-primary btn-sm" @click="save" :disabled="!isFormValid" data-guide="ai-save">
                   <Save :size="14" /> 保存配置
                 </button>
                 <span v-if="testResult" :style="{ fontSize: '12px', color: testResult.success ? 'var(--success-500)' : 'var(--danger-500)' }">
@@ -187,10 +193,11 @@ import {
   LLM_PROVIDERS, loadAllConfigs, loadActiveConfigId, setActiveConfigId,
   upsertConfig, deleteConfig, testLlmConnection, generateConfigName, nextId
 } from '../core/llm/llm-service.js'
+import GuideTour from '../components/GuideTour.vue'
 
 export default {
   name: 'AiSettings',
-  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Lightbulb, Plus, Trash2, Star },
+  components: { GuideTour, Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Lightbulb, Plus, Trash2, Star },
   inject: ['showToast'],
   data() {
     return {
@@ -203,6 +210,12 @@ export default {
       testing: false,
       testResult: null,
       saved: false,
+      guideVisible: true,
+      guideSteps: [
+        { target: 'ai-add', text: '点击新增配置，添加一个 AI 模型配置', doneWhen: 'hasForm' },
+        { target: 'ai-apikey', text: '填写模型提供商的 API Key', doneWhen: 'hasKey' },
+        { target: 'ai-save', text: '点击保存配置，即可在其他页面使用 AI 补充', doneWhen: 'hasSaved' },
+      ],
     }
   },
   computed: {
@@ -216,9 +229,22 @@ export default {
     isFormValid() {
       return this.form && this.form.baseUrl && this.form.apiKey && this.form.model
     },
+    guideConditions() {
+      return {
+        hasForm: !!this.form,
+        hasKey: !!(this.form && this.form.apiKey),
+        hasSaved: this.configs.length > 0,
+      }
+    },
   },
   async mounted() {
     await this.loadData()
+    this.guideVisible = localStorage.getItem('guideEnabled') !== 'false'
+    this._guideHandler = (e) => { this.guideVisible = e.detail }
+    window.addEventListener('guide-toggle', this._guideHandler)
+  },
+  beforeUnmount() {
+    if (this._guideHandler) window.removeEventListener('guide-toggle', this._guideHandler)
   },
   methods: {
     async loadData() {

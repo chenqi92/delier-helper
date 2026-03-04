@@ -1,5 +1,11 @@
 <template>
   <div style="display:flex;flex-direction:column;height:100%;">
+    <GuideTour
+      :steps="guideSteps"
+      :enabled="guideVisible"
+      :conditions="guideConditions"
+      @finish="guideVisible = false"
+    />
     <!-- 头部操作栏 -->
     <div class="view-header">
       <div class="header-actions">
@@ -66,7 +72,7 @@
                 <span class="badge badge-success">{{ detectedLang.icon }} {{ detectedLang.label }}</span>
               </div>
             </div>
-            <button class="btn btn-primary btn-sm" style="width:100%;margin-top:8px;" @click="selectProject">
+            <button class="btn btn-primary btn-sm" style="width:100%;margin-top:8px;" @click="selectProject" data-guide="api-select-dir">
               <FolderOpen :size="14" /> {{ projectDir ? '更换目录' : '选择目录' }}
             </button>
           </div>
@@ -83,6 +89,7 @@
               style="width:100%;"
               @click="startParsing"
               :disabled="parsing || !detectedLang"
+              data-guide="api-start-parse"
             >
               <Scan :size="14" /> {{ parsing ? '解析中...' : '开始解析' }}
             </button>
@@ -423,6 +430,7 @@ import { detectProjectLanguage } from '../core/api-doc/parser-registry.js'
 import { parseSpringBootProject, isPlaceholder } from '../core/api-doc/spring-boot-parser.js'
 import { renderMarkdown, renderDocx, DEFAULT_DOC_MODULES } from '../core/api-doc/api-doc-renderer.js'
 import { loadAllConfigs, loadActiveConfigId, fillApiDocPlaceholders, createAiController } from '../core/llm/llm-service.js'
+import GuideTour from '../components/GuideTour.vue'
 import {
   FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
   Plug, Filter, Settings, ChevronRight, Scan, Bot
@@ -431,10 +439,11 @@ import {
 export default {
   name: 'ApiDocGenerator',
   components: {
+    GuideTour,
     FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
     Plug, Filter, Settings, ChevronRight, Scan, Bot
   },
-  inject: ['showToast'],
+  inject: ['showToast', 'getGuideEnabled'],
   data() {
     return {
       projectDir: '',
@@ -457,6 +466,11 @@ export default {
       aiController: null,
       aiConfigs: [],
       selectedConfigId: null,
+      guideVisible: true,
+      guideSteps: [
+        { target: 'api-select-dir', text: '选择 Spring Boot 项目的根目录', doneWhen: 'hasProject' },
+        { target: 'api-start-parse', text: '点击开始解析接口文档', doneWhen: 'hasParsed' },
+      ],
     }
   },
   computed: {
@@ -483,6 +497,12 @@ export default {
     },
     enabledDocModules() {
       return this.docModules.filter(m => m.enabled)
+    },
+    guideConditions() {
+      return {
+        hasProject: !!this.projectDir,
+        hasParsed: !!this.parseResult,
+      }
     },
     displayModules() {
       const prefix = this.customPrefix ? this.customPrefix.replace(/\/+$/, '') : ''
@@ -530,6 +550,14 @@ export default {
       }
       return allApis
     },
+  },
+  mounted() {
+    this.guideVisible = localStorage.getItem('guideEnabled') !== 'false'
+    this._guideHandler = (e) => { this.guideVisible = e.detail }
+    window.addEventListener('guide-toggle', this._guideHandler)
+  },
+  beforeUnmount() {
+    if (this._guideHandler) window.removeEventListener('guide-toggle', this._guideHandler)
   },
   methods: {
     // ===== 项目选择 =====

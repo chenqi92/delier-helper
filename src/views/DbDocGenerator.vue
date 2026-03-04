@@ -1,5 +1,11 @@
 <template>
   <div style="display:flex;flex-direction:column;height:100%;">
+    <GuideTour
+      :steps="guideSteps"
+      :enabled="guideVisible"
+      :conditions="guideConditions"
+      @finish="guideVisible = false"
+    />
     <!-- 头部操作栏 -->
     <div class="view-header">
       <div class="header-actions">
@@ -65,7 +71,7 @@
       <!-- 左侧配置面板 -->
       <aside class="config-panel">
         <!-- 连接配置 -->
-        <div class="card">
+        <div class="card" data-guide="db-connection">
           <div class="card-header">
             <h3><Database :size="14" /> 数据库连接</h3>
             <span v-if="connStatus === 'connected'" class="conn-dot connected" title="已连接"></span>
@@ -124,6 +130,7 @@
                 @click="testConnection"
                 :disabled="loading || !isConnConfigComplete"
                 :title="!isConnConfigComplete ? '请先填写主机、端口和用户名' : '测试数据库连接'"
+                data-guide="db-test"
               >
                 <Wifi :size="14" /> 测试连接
               </button>
@@ -133,6 +140,7 @@
                 @click="fetchSchema"
                 :disabled="loading || !isConfigComplete"
                 :title="!isConfigComplete ? '请先连接并选择一个数据库' : '获取数据库表结构'"
+                data-guide="db-fetch"
               >
                 <Download :size="14" /> 获取结构
               </button>
@@ -440,6 +448,7 @@ import {
   generateErMermaid, generateTableEntitySvg, renderDbMarkdown, renderDbDocx
 } from '../core/db-doc/db-doc-renderer.js'
 import { loadAllConfigs, loadActiveConfigId, fillDbDocPlaceholders, createAiController } from '../core/llm/llm-service.js'
+import GuideTour from '../components/GuideTour.vue'
 import {
   Database, Check, FileDown, FileText, ChevronRight, Filter, Settings,
   Lightbulb, Wifi, Download, GitBranch, Key, Link, X, Bot
@@ -448,10 +457,11 @@ import {
 export default {
   name: 'DbDocGenerator',
   components: {
+    GuideTour,
     Database, Check, FileDown, FileText, ChevronRight, Filter, Settings,
     Lightbulb, Wifi, Download, GitBranch, Key, Link, X, Bot
   },
-  inject: ['showToast'],
+  inject: ['showToast', 'getGuideEnabled'],
   data() {
     return {
       config: {
@@ -503,6 +513,11 @@ export default {
       aiController: null,
       aiConfigs: [],
       selectedConfigId: null,
+      guideVisible: true,
+      guideSteps: [
+        { target: 'db-test', text: '填写连接信息后，点击测试连接获取数据库列表', doneWhen: 'hasConnected' },
+        { target: 'db-fetch', text: '选择数据库后点击获取表结构', doneWhen: 'hasSchema' },
+      ],
     }
   },
   computed: {
@@ -554,6 +569,13 @@ export default {
         indexes: this.filteredIndexes,
       }
     },
+    guideConditions() {
+      return {
+        hasConn: this.isConnConfigComplete,
+        hasConnected: this.connStatus === 'connected',
+        hasSchema: !!this.schema,
+      }
+    },
   },
   watch: {
     viewMode(val) {
@@ -586,6 +608,14 @@ export default {
         this.$nextTick(() => this.renderErDiagram())
       }
     },
+  },
+  mounted() {
+    this.guideVisible = localStorage.getItem('guideEnabled') !== 'false'
+    this._guideHandler = (e) => { this.guideVisible = e.detail }
+    window.addEventListener('guide-toggle', this._guideHandler)
+  },
+  beforeUnmount() {
+    if (this._guideHandler) window.removeEventListener('guide-toggle', this._guideHandler)
   },
   methods: {
     // ===== 数据库类型切换 =====

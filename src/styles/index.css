@@ -1990,3 +1990,111 @@ select.form-input {
     justify-content: flex-end;
     gap: 8px;
 }
+
+/* ==================== 引导提示 ==================== */
+
+.guide-tour {
+    pointer-events: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9999;
+}
+
+.guide-highlight {
+    position: fixed;
+    border: 2px dashed #ef4444;
+    border-radius: 6px;
+    pointer-events: none;
+    animation: guide-pulse 1.5s ease-in-out infinite;
+    box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+}
+
+@keyframes guide-pulse {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+    }
+
+    50% {
+        box-shadow: 0 0 0 8px rgba(239, 68, 68, 0.08);
+    }
+}
+
+.guide-tooltip {
+    position: fixed;
+    pointer-events: auto;
+    width: 260px;
+    background: #1e1b4b;
+    border: 1px solid var(--primary-500);
+    border-radius: 8px;
+    padding: 10px 14px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+}
+
+.guide-tooltip-content {
+    font-size: 13px;
+    line-height: 1.5;
+    color: #e2e8f0;
+}
+
+.guide-step-badge {
+    display: inline-block;
+    background: var(--primary-500);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 8px;
+    margin-right: 6px;
+}
+
+.guide-tooltip-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.guide-btn {
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 4px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    background: transparent;
+    color: #cbd5e1;
+    cursor: pointer;
+}
+
+.guide-btn:hover {
+    background: var(--bg-secondary);
+}
+
+.guide-btn-primary {
+    background: var(--primary-500);
+    border-color: var(--primary-500);
+    color: #fff;
+}
+
+.guide-btn-primary:hover {
+    background: var(--primary-600);
+}
+
+/* 引导开关按钮 */
+.guide-toggle-btn {
+    position: relative;
+}
+
+.guide-toggle-btn.guide-active::after {
+    content: '';
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ef4444;
+}

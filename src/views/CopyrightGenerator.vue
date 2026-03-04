@@ -1,5 +1,11 @@
 <template>
   <div style="display:flex;flex-direction:column;height:100%;">
+    <GuideTour
+      :steps="guideSteps"
+      :enabled="guideVisible"
+      :conditions="guideConditions"
+      @finish="guideVisible = false"
+    />
     <!-- 头部操作栏 -->
     <div class="view-header">
       <div class="header-actions">
@@ -117,7 +123,7 @@
         <div class="card">
           <div class="card-header">
             <h3><FolderOpen :size="14" /> 代码目录</h3>
-            <button class="btn btn-primary btn-sm" @click="addDirectory"><Plus :size="14" /> 添加目录</button>
+            <button class="btn btn-primary btn-sm" @click="addDirectory" data-guide="add-dir"><Plus :size="14" /> 添加目录</button>
           </div>
           <div class="card-body">
             <div v-if="config.directories.length === 0" class="tip">
@@ -142,7 +148,7 @@
         <div class="card">
           <div class="card-header">
             <h3><FileText :size="14" /> 文件类型</h3>
-            <button :class="['btn','btn-sm', config.directories.length > 0 ? 'btn-primary' : 'btn-secondary']" @click="detectTypes" :disabled="config.directories.length===0 || detecting">
+            <button :class="['btn','btn-sm', config.directories.length > 0 ? 'btn-primary' : 'btn-secondary']" @click="detectTypes" :disabled="config.directories.length===0 || detecting" data-guide="detect-types">
               {{ detecting ? '检测中...' : '' }}<Search :size="14" v-if="!detecting" /> {{ detecting ? '' : '检测类型' }}
             </button>
           </div>
@@ -156,7 +162,7 @@
                 <span class="select-action" @click="deselectAllTypes">全不选</span>
                 <span class="select-action" @click="selectCodeTypes">仅代码</span>
               </div>
-              <div class="file-type-grid-scroll">
+              <div class="file-type-grid-scroll" data-guide="file-types">
                 <div class="file-type-grid">
                   <div v-for="ft in sortedFileTypes" :key="ft.ext"
                     :class="['file-type-tag',{active:config.selectedExtensions.includes(ft.ext)}]"
@@ -232,7 +238,7 @@
                 <button v-if="previewData" class="btn btn-secondary btn-sm" @click="reshufflePreview" :disabled="previewing" title="使用新的随机种子重新选择代码">
                   <Shuffle :size="14" /> 换一批
                 </button>
-                <button :class="['btn','btn-sm', config.selectedExtensions.length > 0 ? 'btn-primary' : 'btn-secondary']" @click="refreshPreview" :disabled="previewing || config.selectedExtensions.length===0">
+                <button :class="['btn','btn-sm', config.selectedExtensions.length > 0 ? 'btn-primary' : 'btn-secondary']" @click="refreshPreview" :disabled="previewing || config.selectedExtensions.length===0" data-guide="refresh-preview">
                   <RefreshCw :size="14" v-if="!previewing" /> {{ previewing ? '加载中...' : '刷新预览' }}
                 </button>
               </div>
@@ -289,6 +295,7 @@ import { writeFile, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { processFileContent, allocateCodeByRatio } from '../core/ratio-allocator.js'
 import { generateDocxBuffer } from '../core/docx-generator.js'
 import { smartSortFiles } from '../core/file-sorter.js'
+import GuideTour from '../components/GuideTour.vue'
 import {
   FolderOpen, Save, Pin, Plus, X, FileText, Search,
   Lightbulb, Ban, Eraser, Eye, RefreshCw, Check, FileDown,
@@ -314,11 +321,12 @@ export default {
     },
   },
   components: {
+    GuideTour,
     FolderOpen, Save, Pin, Plus, X, FileText, Search,
     Lightbulb, Ban, Eraser, Eye, RefreshCw, Check, FileDown,
     ChevronDown, Shuffle
   },
-  inject: ['showToast'],
+  inject: ['showToast', 'getGuideEnabled'],
   data() {
     return {
       config: {
@@ -340,6 +348,12 @@ export default {
       lastResult: null,
       dirResults: [],
       currentSeed: null,
+      guideVisible: true,
+      guideSteps: [
+        { target: 'add-dir', text: '点击此处添加源代码目录，支持添加多个目录', doneWhen: 'hasDir' },
+        { target: 'detect-types', text: '添加目录后，点击检测文件类型（会自动选中代码文件）', doneWhen: 'hasTypes' },
+        { target: 'refresh-preview', text: '点击刷新预览查看生成效果，也可先在上方调整文件类型选择', doneWhen: 'hasPreview' },
+      ],
     }
   },
   computed: {
@@ -369,6 +383,22 @@ export default {
         return b.count - a.count
       })
     },
+    guideConditions() {
+      return {
+        hasDir: this.config.directories.length > 0,
+        hasTypes: this.fileTypes.length > 0,
+        hasExts: this.config.selectedExtensions.length > 0,
+        hasPreview: !!this.previewData,
+      }
+    },
+  },
+  mounted() {
+    this.guideVisible = localStorage.getItem('guideEnabled') !== 'false'
+    this._guideHandler = (e) => { this.guideVisible = e.detail }
+    window.addEventListener('guide-toggle', this._guideHandler)
+  },
+  beforeUnmount() {
+    if (this._guideHandler) window.removeEventListener('guide-toggle', this._guideHandler)
   },
   methods: {
     closeFontDropdown() {

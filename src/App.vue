@@ -16,6 +16,13 @@
       />
 
       <div class="header-actions">
+        <button
+          :class="['btn', 'btn-secondary', 'btn-sm', 'guide-toggle-btn', { 'guide-active': guideEnabled }]"
+          @click="toggleGuide"
+          :title="guideEnabled ? '关闭引导提示' : '开启引导提示'"
+        >
+          <HelpCircle :size="14" />
+        </button>
         <button class="btn btn-secondary btn-sm" @click="toggleTheme" :title="theme === 'dark' ? '切换到浅色模式' : '切换到深色模式'">
           <Sun v-if="theme === 'dark'" :size="14" />
           <Moon v-else :size="14" />
@@ -31,7 +38,7 @@
 </template>
 
 <script>
-import { Sun, Moon, FileCode, Plug, Database, Bot } from 'lucide-vue-next'
+import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle } from 'lucide-vue-next'
 import { markRaw } from 'vue'
 import TabNav from './components/TabNav.vue'
 import CopyrightGenerator from './views/CopyrightGenerator.vue'
@@ -41,16 +48,18 @@ import AiSettings from './views/AiSettings.vue'
 
 export default {
   name: 'App',
-  components: { TabNav, Sun, Moon, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, AiSettings },
+  components: { TabNav, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, AiSettings },
   provide() {
     return {
       showToast: this.showToast,
+      getGuideEnabled: () => this.guideEnabled,
     }
   },
   data() {
     return {
       activeTab: 'copyright',
       theme: 'light',
+      guideEnabled: localStorage.getItem('guideEnabled') !== 'false',
       toast: { show: false, message: '', type: 'info' },
       tabs: [
         { id: 'copyright', label: '软著代码', icon: markRaw(FileCode) },
@@ -74,6 +83,11 @@ export default {
   methods: {
     toggleTheme() {
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
+    },
+    toggleGuide() {
+      this.guideEnabled = !this.guideEnabled
+      localStorage.setItem('guideEnabled', this.guideEnabled)
+      window.dispatchEvent(new CustomEvent('guide-toggle', { detail: this.guideEnabled }))
     },
     showToast(message, type = 'info') {
       this.toast = { show: true, message, type }
