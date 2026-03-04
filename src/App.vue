@@ -31,16 +31,17 @@
 </template>
 
 <script>
-import { Sun, Moon, FileCode, Plug, Database } from 'lucide-vue-next'
+import { Sun, Moon, FileCode, Plug, Database, Bot } from 'lucide-vue-next'
 import { markRaw } from 'vue'
 import TabNav from './components/TabNav.vue'
 import CopyrightGenerator from './views/CopyrightGenerator.vue'
 import ApiDocGenerator from './views/ApiDocGenerator.vue'
 import DbDocGenerator from './views/DbDocGenerator.vue'
+import AiSettings from './views/AiSettings.vue'
 
 export default {
   name: 'App',
-  components: { TabNav, Sun, Moon, CopyrightGenerator, ApiDocGenerator, DbDocGenerator },
+  components: { TabNav, Sun, Moon, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, AiSettings },
   provide() {
     return {
       showToast: this.showToast,
@@ -55,11 +56,13 @@ export default {
         { id: 'copyright', label: '软著代码', icon: markRaw(FileCode) },
         { id: 'api-doc',   label: '接口文档', icon: markRaw(Plug) },
         { id: 'db-doc',    label: '数据库文档', icon: markRaw(Database) },
+        { id: 'ai-settings', label: 'AI 设置', icon: markRaw(Bot) },
       ],
       viewMap: {
         'copyright': 'CopyrightGenerator',
         'api-doc': 'ApiDocGenerator',
         'db-doc': 'DbDocGenerator',
+        'ai-settings': 'AiSettings',
       },
     }
   },

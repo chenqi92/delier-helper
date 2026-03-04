@@ -186,3 +186,91 @@ pub async fn db_fetch_databases(config: db_connector::DbConfig) -> DbListResult 
         },
     }
 }
+
+// ==================== LLM HTTP 请求 ====================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmRequest {
+    pub url: String,
+    pub api_key: String,
+    pub body: String,
+    pub is_gemini: bool,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmResponse {
+    pub success: bool,
+    pub status: u16,
+    pub body: String,
+    pub error: Option<String>,
+}
+
+/// 通过 Rust 后端直接发起 LLM API 请求（绕过前端 fetch 的 header 限制）
+#[tauri::command]
+pub async fn llm_request(req: LlmRequest) -> LlmResponse {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(120))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return LlmResponse {
+                success: false,
+                status: 0,
+                body: String::new(),
+                error: Some(format!("创建 HTTP 客户端失败: {}", e)),
+            }
+        }
+    };
+
+    // 构建请求 URL：Gemini 用 ?key= 查询参数
+    let url = if req.is_gemini {
+        if req.url.contains('?') {
+            format!("{}&key={}", req.url, req.api_key)
+        } else {
+            format!("{}?key={}", req.url, req.api_key)
+        }
+    } else {
+        req.url.clone()
+    };
+
+    let mut builder = client.post(&url).header("Content-Type", "application/json");
+
+    // 所有提供商都用 Bearer
+    builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+
+    // Gemini 额外带 x-goog-api-key（Google API 另一种标准认证方式）
+    if req.is_gemini {
+        builder = builder.header("x-goog-api-key", req.api_key.clone());
+    }
+
+    let resp = match builder.body(req.body).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return LlmResponse {
+                success: false,
+                status: 0,
+                body: String::new(),
+                error: Some(format!("请求失败: {}", e)),
+            }
+        }
+    };
+
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    let success = status >= 200 && status < 300;
+    let error = if success {
+        None
+    } else {
+        Some(format!("HTTP {}: {}", status, body))
+    };
+
+    LlmResponse {
+        success,
+        status,
+        body,
+        error,
+    }
+}

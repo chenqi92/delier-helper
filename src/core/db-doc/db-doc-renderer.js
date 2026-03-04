@@ -61,6 +61,11 @@ export function generateErMermaid(tables, columns, foreignKeys, options = {}) {
         const tableCols = columns.filter(c => c.table_name === table.name)
         const sanitizedName = sanitizeMermaidId(table.name)
         lines.push(`    ${sanitizedName} {`)
+        // 表注释作为第一行
+        if (showComments && table.comment && table.comment.trim()) {
+            const tc = table.comment.trim().substring(0, 30).replace(/"/g, "'")
+            lines.push(`        string ___${sanitizedName}_desc___ "${tc}"`)
+        }
         // 只展示 PK/FK 和前几个关键字段，避免过长
         const maxCols = 15
         const showCols = tableCols.slice(0, maxCols)

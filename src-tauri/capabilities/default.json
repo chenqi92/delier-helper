@@ -27,6 +27,19 @@
           "path": "**"
         }
       ]
-    }
+    },
+    "http:default",
+    {
+      "identifier": "http:default",
+      "allow": [
+        {
+          "url": "https://**"
+        },
+        {
+          "url": "http://**"
+        }
+      ]
+    },
+    "store:default"
   ]
 }

@@ -13,12 +13,14 @@
     --gray-700: #334155;
     --gray-800: #1e293b;
     --success-500: #22c55e;
+    --warning-400: #fbbf24;
     --warning-500: #f59e0b;
     --danger-500: #ef4444;
     --info-500: #3b82f6;
     --bg-app: #0c0f1a;
     --bg-surface: #151929;
     --bg-elevated: #1c2137;
+    --bg-secondary: #232845;
     --bg-input: #1a1f33;
     --bg-hover: #232845;
     --border-color: rgba(99, 102, 241, 0.15);
@@ -50,6 +52,8 @@
     --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.08);
     --primary-300: #6366f1;
     --primary-400: #4f46e5;
+    --bg-secondary: #e8eaef;
+    --warning-400: #fbbf24;
     --code-bg: #f6f8fa;
     --code-color: #24292f;
     --code-line-number: #8b949e;
@@ -812,6 +816,99 @@ select.form-input {
     height: 1px;
     background: var(--border-color);
     margin: 4px 0;
+}
+
+/* ========== AI 补充按钮组 ========== */
+.ai-fill-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.ai-model-select {
+    padding: 5px 24px 5px 8px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-size: 11px;
+    font-family: inherit;
+    outline: none;
+    cursor: pointer;
+    max-width: 160px;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    transition: border-color var(--transition-fast);
+}
+
+.ai-model-select:focus {
+    border-color: var(--primary-500);
+}
+
+.ai-model-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* AI 日志面板 */
+.ai-log-panel {
+    max-height: 140px;
+    overflow-y: auto;
+    background: var(--bg-secondary, #1a1a2e);
+    border-bottom: 1px solid var(--border-color);
+    padding: 6px 16px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 11px;
+    line-height: 1.6;
+}
+
+.ai-log-item {
+    display: flex;
+    gap: 8px;
+    color: var(--text-secondary);
+}
+
+.ai-log-time {
+    color: var(--text-muted, #64748b);
+    flex-shrink: 0;
+}
+
+.ai-log-success {
+    color: var(--success-500, #22c55e);
+}
+
+.ai-log-error {
+    color: var(--error-500, #ef4444);
+}
+
+.ai-log-warn {
+    color: var(--warning-400, #facc15);
+}
+
+.ai-log-info {
+    color: var(--text-secondary);
+}
+
+/* 取消按钮 */
+.btn-danger {
+    background: var(--error-500, #ef4444) !important;
+    border-color: var(--error-500, #ef4444) !important;
+}
+
+.btn-danger:hover {
+    background: #dc2626 !important;
+}
+
+.btn-secondary {
+    background: var(--bg-tertiary, #374151) !important;
+    border-color: var(--border-color) !important;
+    color: var(--text-secondary) !important;
+}
+
+.btn-secondary:hover {
+    background: var(--bg-elevated, #4b5563) !important;
 }
 
 .badge {

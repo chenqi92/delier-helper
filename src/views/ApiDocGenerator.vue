@@ -9,12 +9,37 @@
         <span v-else-if="parseResult" style="font-size:12px;color:var(--success-500);">
           <Check :size="12" /> {{ parseResult.modules.length }} 个模块，{{ totalApis }} 个接口
         </span>
+        <div class="ai-fill-group" v-if="parseResult">
+          <button v-if="!aiProcessing" class="btn btn-primary btn-sm" @click="startAiFill">
+            <Bot :size="14" /> AI 补充
+          </button>
+          <template v-else>
+            <span class="btn btn-sm" style="font-size:11px;color:var(--primary-300);pointer-events:none;">
+              <span class="spinner" style="width:12px;height:12px;"></span>
+              {{ aiProgressText }}
+            </span>
+            <button v-if="!aiController?.paused" class="btn btn-secondary btn-sm" @click="aiController?.pause()" title="暂停">⏸ 暂停</button>
+            <button v-else class="btn btn-primary btn-sm" @click="aiController?.resume()" title="继续">▶ 继续</button>
+            <button class="btn btn-danger btn-sm" @click="aiController?.cancel()" title="取消">✕ 取消</button>
+          </template>
+          <select v-if="aiConfigs.length > 1" class="ai-model-select" v-model="selectedConfigId" :disabled="aiProcessing">
+            <option v-for="c in aiConfigs" :key="c.id" :value="c.id">{{ c.name || c.model }}</option>
+          </select>
+        </div>
         <button class="btn btn-primary btn-sm" @click="exportMarkdown" :disabled="!parseResult">
           <FileText :size="14" /> 导出 Markdown
         </button>
         <button class="btn btn-primary btn-sm" @click="exportWord" :disabled="!parseResult">
           <FileDown :size="14" /> 导出 Word
         </button>
+      </div>
+    </div>
+
+    <!-- AI 日志面板 -->
+    <div v-if="aiLogs.length > 0" class="ai-log-panel" ref="aiLogPanel">
+      <div v-for="(log, i) in aiLogs" :key="i" :class="['ai-log-item', 'ai-log-' + log.level]">
+        <span class="ai-log-time">{{ log.time }}</span>
+        <span>{{ log.msg }}</span>
       </div>
     </div>
 
@@ -397,16 +422,17 @@ import { writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { detectProjectLanguage } from '../core/api-doc/parser-registry.js'
 import { parseSpringBootProject, isPlaceholder } from '../core/api-doc/spring-boot-parser.js'
 import { renderMarkdown, renderDocx, DEFAULT_DOC_MODULES } from '../core/api-doc/api-doc-renderer.js'
+import { loadAllConfigs, loadActiveConfigId, fillApiDocPlaceholders, createAiController } from '../core/llm/llm-service.js'
 import {
   FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
-  Plug, Filter, Settings, ChevronRight, Scan
+  Plug, Filter, Settings, ChevronRight, Scan, Bot
 } from 'lucide-vue-next'
 
 export default {
   name: 'ApiDocGenerator',
   components: {
     FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
-    Plug, Filter, Settings, ChevronRight, Scan
+    Plug, Filter, Settings, ChevronRight, Scan, Bot
   },
   inject: ['showToast'],
   data() {
@@ -425,6 +451,12 @@ export default {
       groupByController: true,
       showModulePath: false,
       customPrefix: '',
+      aiProcessing: false,
+      aiProgressText: '',
+      aiLogs: [],
+      aiController: null,
+      aiConfigs: [],
+      selectedConfigId: null,
     }
   },
   computed: {
@@ -743,6 +775,68 @@ export default {
       if (newText && newText !== field.description) {
         field.description = newText
       }
+    },
+
+    addAiLog(msg, level = 'info') {
+      const now = new Date()
+      const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+      this.aiLogs.push({ time, msg, level })
+      this.$nextTick(() => {
+        const panel = this.$refs.aiLogPanel
+        if (panel) panel.scrollTop = panel.scrollHeight
+      })
+    },
+
+    async startAiFill() {
+      if (!this.parseResult || this.aiProcessing) return
+
+      this.aiConfigs = await loadAllConfigs()
+      if (this.aiConfigs.length === 0) {
+        this.showToast('请先在「AI 设置」标签页配置模型', 'warning')
+        return
+      }
+
+      if (!this.selectedConfigId) {
+        const activeId = await loadActiveConfigId()
+        this.selectedConfigId = activeId || this.aiConfigs[0].id
+      }
+      const config = this.aiConfigs.find(c => c.id === this.selectedConfigId) || this.aiConfigs[0]
+
+      this.aiProcessing = true
+      this.aiLogs = []
+      this.aiController = createAiController()
+      this.aiProgressText = `使用 ${config.name || config.model}...`
+      this.addAiLog(`开始 AI 补充，使用 ${config.name || config.model}`, 'info')
+
+      try {
+        const result = await fillApiDocPlaceholders(
+          config,
+          this.parseResult,
+          (msg, level) => {
+            this.addAiLog(msg, level)
+            this.aiProgressText = msg
+          },
+          (batchName, filled, batchTotal) => {
+            // 每批完成后实时刷新视图
+            this.parseResult = { ...this.parseResult }
+          },
+          this.aiController,
+        )
+
+        if (result.total === 0) {
+          this.showToast('没有需要补充的占位符', 'info')
+        } else {
+          this.showToast(`AI 补充完成: ${result.filled}/${result.total} 个字段已填充`, 'success')
+          this.parseResult = { ...this.parseResult }
+        }
+      } catch (e) {
+        this.showToast('AI 补充失败: ' + String(e), 'error')
+        this.addAiLog(`失败: ${e.message}`, 'error')
+      }
+
+      this.aiProcessing = false
+      this.aiProgressText = ''
+      this.aiController = null
     },
   },
 }

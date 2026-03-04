@@ -11,21 +11,52 @@
         </span>
         <div class="db-view-switcher" v-if="schema">
           <button :class="['db-view-btn', { active: viewMode === 'table' }]" @click="viewMode = 'table'">
-            <Database :size="12" /> 表结构
+            <Database :size="12" /> 数据字典
           </button>
           <button :class="['db-view-btn', { active: viewMode === 'er' }]" @click="viewMode = 'er'">
-            <GitBranch :size="12" /> ER 图
+            <GitBranch :size="12" /> 关系图
           </button>
           <button :class="['db-view-btn', { active: viewMode === 'relation' }]" @click="viewMode = 'relation'">
-            <Link :size="12" /> 关系图
+            <Link :size="12" /> 实体图
           </button>
         </div>
-        <button class="btn btn-primary btn-sm" @click="exportMarkdown" :disabled="!schema">
+        <div class="ai-fill-group" v-if="schema">
+          <button v-if="!aiProcessing" class="btn btn-primary btn-sm" @click="startAiFill">
+            <Bot :size="14" /> AI 补充
+          </button>
+          <template v-else>
+            <span class="btn btn-sm" style="font-size:11px;color:var(--primary-300);pointer-events:none;">
+              <span class="spinner" style="width:12px;height:12px;"></span>
+              {{ aiProgressText }}
+            </span>
+            <button v-if="!aiController?.paused" class="btn btn-secondary btn-sm" @click="aiController?.pause()" title="暂停">⏸ 暂停</button>
+            <button v-else class="btn btn-primary btn-sm" @click="aiController?.resume()" title="继续">▶ 继续</button>
+            <button class="btn btn-danger btn-sm" @click="aiController?.cancel()" title="取消">✕ 取消</button>
+          </template>
+          <select v-if="aiConfigs.length > 1" class="ai-model-select" v-model="selectedConfigId" :disabled="aiProcessing">
+            <option v-for="c in aiConfigs" :key="c.id" :value="c.id">{{ c.name || c.model }}</option>
+          </select>
+        </div>
+        <button v-if="viewMode === 'table'" class="btn btn-primary btn-sm" @click="exportMarkdown" :disabled="!schema">
           <FileText :size="14" /> 导出 Markdown
         </button>
-        <button class="btn btn-primary btn-sm" @click="exportWord" :disabled="!schema">
+        <button v-if="viewMode === 'table'" class="btn btn-primary btn-sm" @click="exportWord" :disabled="!schema">
           <FileDown :size="14" /> 导出 Word
         </button>
+        <button v-if="viewMode === 'er'" class="btn btn-primary btn-sm" @click="openExportDialog('er')" :disabled="!schema">
+          <Download :size="14" /> 导出 SVG
+        </button>
+        <button v-if="viewMode === 'relation'" class="btn btn-primary btn-sm" @click="openExportDialog('relation')" :disabled="!schema">
+          <Download :size="14" /> 批量导出
+        </button>
+      </div>
+    </div>
+
+    <!-- AI 日志面板 -->
+    <div v-if="aiLogs.length > 0" class="ai-log-panel" ref="aiLogPanel">
+      <div v-for="(log, i) in aiLogs" :key="i" :class="['ai-log-item', 'ai-log-' + log.level]">
+        <span class="ai-log-time">{{ log.time }}</span>
+        <span>{{ log.msg }}</span>
       </div>
     </div>
 
@@ -200,16 +231,12 @@
           <div v-if="viewMode === 'er'" class="er-diagram-wrap">
             <div class="er-diagram-header">
               <div style="display:flex;align-items:center;gap:10px;">
-                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">ER 实体关系图</span>
+                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">表关系图</span>
                 <label class="checkbox-label" style="font-size:11px;margin:0;">
                   <input type="checkbox" v-model="erShowComments" /> 显示备注
                 </label>
               </div>
               <div style="display:flex;align-items:center;gap:8px;">
-                <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px;" @click="openExportDialog('er')">
-                  <Download :size="12" /> 导出图片
-                </button>
-                <span style="width:1px;height:16px;background:var(--border-color);"></span>
                 <span style="font-size:11px;color:var(--text-muted);">{{ Math.round(diagramScale * 100) }}%</span>
                 <button class="btn-icon" @click="zoomIn" title="放大"><span style="font-size:16px;">+</span></button>
                 <button class="btn-icon" @click="zoomOut" title="缩小"><span style="font-size:16px;">–</span></button>
@@ -234,7 +261,7 @@
           <div v-if="viewMode === 'relation'" class="er-diagram-wrap">
             <div class="er-diagram-header">
               <div style="display:flex;align-items:center;gap:10px;">
-                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">实体关系图</span>
+                <span style="font-size:13px;font-weight:600;color:var(--text-primary);">实体属性图</span>
                 <select class="form-input" style="width:180px;height:28px;font-size:12px;padding:2px 8px;" v-model="currentEntityTableIndex">
                   <option v-for="(t, idx) in filteredTables" :key="t.name" :value="idx">
                     {{ t.name }} {{ t.comment ? '(' + t.comment + ')' : '' }}
@@ -243,10 +270,6 @@
                 <span style="font-size:11px;color:var(--text-muted);">{{ currentEntityTableIndex + 1 }} / {{ filteredTables.length }}</span>
               </div>
               <div style="display:flex;align-items:center;gap:6px;">
-                <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px;" @click="openExportDialog('relation')">
-                  <Download :size="12" /> 批量导出
-                </button>
-                <span style="width:1px;height:16px;background:var(--border-color);"></span>
                 <button class="btn-icon" @click="prevEntityTable" :disabled="currentEntityTableIndex <= 0" title="上一张">❮</button>
                 <button class="btn-icon" @click="nextEntityTable" :disabled="currentEntityTableIndex >= filteredTables.length - 1" title="下一张">❯</button>
                 <span style="width:1px;height:16px;background:var(--border-color);margin:0 2px;"></span>
@@ -377,7 +400,7 @@
     <div v-if="exportDialog.show" class="modal-overlay" @click.self="exportDialog.show = false">
       <div class="modal-content" style="width:420px;">
         <div class="modal-header">
-          <h3>{{ exportDialog.mode === 'er' ? '导出 ER 图' : '批量导出关系图' }}</h3>
+          <h3>{{ exportDialog.mode === 'er' ? '导出关系图' : '批量导出实体图' }}</h3>
           <button class="btn-icon" @click="exportDialog.show = false"><X :size="14" /></button>
         </div>
         <div class="modal-body">
@@ -416,16 +439,17 @@ import {
   processColumnComment, processTableComment, isDbPlaceholder,
   generateErMermaid, generateTableEntitySvg, renderDbMarkdown, renderDbDocx
 } from '../core/db-doc/db-doc-renderer.js'
+import { loadAllConfigs, loadActiveConfigId, fillDbDocPlaceholders, createAiController } from '../core/llm/llm-service.js'
 import {
   Database, Check, FileDown, FileText, ChevronRight, Filter, Settings,
-  Lightbulb, Wifi, Download, GitBranch, Key, Link, X
+  Lightbulb, Wifi, Download, GitBranch, Key, Link, X, Bot
 } from 'lucide-vue-next'
 
 export default {
   name: 'DbDocGenerator',
   components: {
     Database, Check, FileDown, FileText, ChevronRight, Filter, Settings,
-    Lightbulb, Wifi, Download, GitBranch, Key, Link, X
+    Lightbulb, Wifi, Download, GitBranch, Key, Link, X, Bot
   },
   inject: ['showToast'],
   data() {
@@ -472,7 +496,13 @@ export default {
         includeIndexes: true,
       },
       // 用户编辑的注释覆盖（用于占位符编辑）
-      commentOverrides: {}, // key: "table:col" or "table:__TABLE__", value: string
+      commentOverrides: {},
+      aiProcessing: false,
+      aiProgressText: '',
+      aiLogs: [],
+      aiController: null,
+      aiConfigs: [],
+      selectedConfigId: null,
     }
   },
   computed: {
@@ -876,40 +906,129 @@ export default {
         const svgDoc = parser.parseFromString(svgString, 'image/svg+xml')
         const svgEl = svgDoc.documentElement
 
-        let w = parseFloat(svgEl.getAttribute('width') || svgEl.viewBox?.baseVal?.width || 800)
-        let h = parseFloat(svgEl.getAttribute('height') || svgEl.viewBox?.baseVal?.height || 600)
+        // 确保有 xmlns
+        svgEl.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+        svgEl.setAttribute('xmlns:xlink', 'http://www.w3.org/1999/xlink')
 
-        // 确保有 viewBox
-        if (!svgEl.getAttribute('viewBox')) {
+        // 获取尺寸（Mermaid 常只设 style 不设 attribute）
+        let w = 0, h = 0
+
+        // 1. 先从 viewBox 取
+        const vb = svgEl.getAttribute('viewBox')
+        if (vb) {
+          const parts = vb.split(/[\s,]+/).map(Number)
+          if (parts.length >= 4 && parts[2] > 0 && parts[3] > 0) {
+            w = parts[2]
+            h = parts[3]
+          }
+        }
+
+        // 2. 从 width/height 属性取（可能是 "800px" 或 "100%"）
+        if (!w || !h) {
+          const attrW = parseFloat(svgEl.getAttribute('width'))
+          const attrH = parseFloat(svgEl.getAttribute('height'))
+          if (attrW > 0 && attrH > 0) { w = attrW; h = attrH }
+        }
+
+        // 3. 从 style 取 (Mermaid 用 max-width)
+        if (!w || !h) {
+          const style = svgEl.getAttribute('style') || ''
+          const wMatch = style.match(/(?:max-)?width:\s*([\d.]+)/)
+          const hMatch = style.match(/(?:max-)?height:\s*([\d.]+)/)
+          if (wMatch) w = parseFloat(wMatch[1]) || w
+          if (hMatch) h = parseFloat(hMatch[1]) || h
+        }
+
+        // 4. 兜底
+        if (!w || w <= 0) w = 1200
+        if (!h || h <= 0) h = 800
+
+        // 强制设置 width/height 属性（Image 需要明确尺寸）
+        svgEl.setAttribute('width', String(w))
+        svgEl.setAttribute('height', String(h))
+        if (!vb) {
           svgEl.setAttribute('viewBox', `0 0 ${w} ${h}`)
         }
+
+        // 处理 foreignObject → 替换为 SVG text
+        const foreignObjects = svgEl.querySelectorAll('foreignObject')
+        foreignObjects.forEach(fo => {
+          const x = fo.getAttribute('x') || '0'
+          const y = fo.getAttribute('y') || '0'
+          const foW = parseFloat(fo.getAttribute('width') || '100')
+          const foH = parseFloat(fo.getAttribute('height') || '30')
+          const textContent = (fo.textContent || '').trim()
+          if (textContent) {
+            const textEl = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'text')
+            textEl.setAttribute('x', String(parseFloat(x) + foW / 2))
+            textEl.setAttribute('y', String(parseFloat(y) + foH / 2 + 4))
+            textEl.setAttribute('text-anchor', 'middle')
+            textEl.setAttribute('fill', '#e2e8f0')
+            textEl.setAttribute('font-size', '12')
+            textEl.setAttribute('font-family', 'sans-serif')
+            textEl.textContent = textContent.length > 40 ? textContent.substring(0, 39) + '…' : textContent
+            fo.parentNode.replaceChild(textEl, fo)
+          } else {
+            fo.parentNode.removeChild(fo)
+          }
+        })
+
+        // 内嵌暗色主题样式
+        const styleEl = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'style')
+        styleEl.textContent = `
+          * { font-family: 'Microsoft YaHei', sans-serif; }
+          .er.entityBox { fill: #1e293b; stroke: #6366f1; }
+          .er.entityLabel { fill: #e2e8f0; }
+          .er.attributeBoxOdd, .er.attributeBoxEven { fill: #1e293b; }
+          .er.relationshipLine { stroke: #94a3b8; }
+          text { fill: #e2e8f0; }
+          .label { fill: #e2e8f0 !important; }
+          rect.basic.label-container { fill: #1e293b; stroke: #475569; }
+        `
+        svgEl.insertBefore(styleEl, svgEl.firstChild)
+
+        // 背景矩形
+        const bgRect = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'rect')
+        bgRect.setAttribute('width', String(w))
+        bgRect.setAttribute('height', String(h))
+        bgRect.setAttribute('fill', '#1e1e2e')
+        svgEl.insertBefore(bgRect, svgEl.firstChild)
 
         const canvas = document.createElement('canvas')
         canvas.width = w * scale
         canvas.height = h * scale
         const ctx = canvas.getContext('2d')
-        ctx.fillStyle = '#1e1e2e'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
 
-        const blob = new Blob([new XMLSerializer().serializeToString(svgEl)], { type: 'image/svg+xml;charset=utf-8' })
-        const url = URL.createObjectURL(blob)
+        // 使用 base64 data URI（比 encodeURIComponent 更可靠）
+        const svgData = new XMLSerializer().serializeToString(svgEl)
+        const base64 = btoa(unescape(encodeURIComponent(svgData)))
+        const dataUrl = 'data:image/svg+xml;base64,' + base64
+
         const img = new Image()
         img.onload = () => {
           ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
-          URL.revokeObjectURL(url)
-          canvas.toBlob(b => {
-            if (b) {
-              b.arrayBuffer().then(ab => resolve(new Uint8Array(ab)))
-            } else {
-              reject(new Error('Canvas toBlob failed'))
-            }
-          }, 'image/png')
+          // 优先用 toDataURL（更可靠）
+          try {
+            const pngUrl = canvas.toDataURL('image/png')
+            const binary = atob(pngUrl.split(',')[1])
+            const arr = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i++) arr[i] = binary.charCodeAt(i)
+            resolve(arr)
+          } catch (e) {
+            canvas.toBlob(b => {
+              if (b) {
+                b.arrayBuffer().then(ab => resolve(new Uint8Array(ab)))
+              } else {
+                reject(new Error('PNG 导出失败'))
+              }
+            }, 'image/png')
+          }
         }
-        img.onerror = () => {
-          URL.revokeObjectURL(url)
-          reject(new Error('SVG image load failed'))
+        img.onerror = (e) => {
+          console.error('SVG Image load error:', e)
+          reject(new Error('SVG 加载失败'))
         }
-        img.src = url
+        img.src = dataUrl
       })
     },
 
@@ -940,7 +1059,7 @@ export default {
       const code = generateErMermaid(tables, columns, fks, { showComments: this.erShowComments })
 
       if (!code || code.split('\n').length <= 1) {
-        this.showToast('选中的表没有外键关系，无法生成 ER 图', 'error')
+        this.showToast('选中的表没有外键关系，无法生成关系图', 'error')
         return
       }
 
@@ -954,16 +1073,36 @@ export default {
       this._renderCounter++
       const { svg } = await mermaid.render(`export-er-${this._renderCounter}`, code)
 
-      const pngData = await this.svgToPng(svg)
+      // 直接导出 SVG 文件（避免 Canvas 尺寸限制）
+      const parser = new DOMParser()
+      const svgDoc = parser.parseFromString(svg, 'image/svg+xml')
+      const svgEl = svgDoc.documentElement
+
+      // 添加深色背景
+      let w = 1200, h = 800
+      const vb = svgEl.getAttribute('viewBox')
+      if (vb) {
+        const parts = vb.split(/[\s,]+/).map(Number)
+        if (parts.length >= 4 && parts[2] > 0) { w = parts[2]; h = parts[3] }
+      }
+      const bgRect = svgDoc.createElementNS('http://www.w3.org/2000/svg', 'rect')
+      bgRect.setAttribute('width', String(w))
+      bgRect.setAttribute('height', String(h))
+      bgRect.setAttribute('fill', '#1e1e2e')
+      svgEl.insertBefore(bgRect, svgEl.firstChild)
+
+      const svgData = new XMLSerializer().serializeToString(svgEl)
+      const encoder = new TextEncoder()
+      const svgBytes = encoder.encode(svgData)
 
       const path = await save({
-        title: '导出 ER 图',
-        defaultPath: 'ER关系图.png',
-        filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+        title: '导出关系图',
+        defaultPath: '关系图.svg',
+        filters: [{ name: 'SVG 矢量图', extensions: ['svg'] }],
       })
       if (!path) return
-      await writeFile(path, pngData)
-      this.showToast('ER 图已导出', 'success')
+      await writeFile(path, svgBytes)
+      this.showToast('关系图已导出 (SVG 格式，可用浏览器打开)', 'success')
     },
 
     async exportEntityImages(selectedNames) {
@@ -1002,6 +1141,70 @@ export default {
       if (!path) return
       await writeFile(path, zipData)
       this.showToast(`已导出 ${count} 张实体关系图`, 'success')
+    },
+
+    addAiLog(msg, level = 'info') {
+      const now = new Date()
+      const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
+      this.aiLogs.push({ time, msg, level })
+      this.$nextTick(() => {
+        const panel = this.$refs.aiLogPanel
+        if (panel) panel.scrollTop = panel.scrollHeight
+      })
+    },
+
+    async startAiFill() {
+      if (!this.schema || this.aiProcessing) return
+
+      this.aiConfigs = await loadAllConfigs()
+      if (this.aiConfigs.length === 0) {
+        this.showToast('请先在「AI 设置」标签页配置模型', 'warning')
+        return
+      }
+
+      if (!this.selectedConfigId) {
+        const activeId = await loadActiveConfigId()
+        this.selectedConfigId = activeId || this.aiConfigs[0].id
+      }
+      const config = this.aiConfigs.find(c => c.id === this.selectedConfigId) || this.aiConfigs[0]
+
+      this.aiProcessing = true
+      this.aiLogs = []
+      this.aiController = createAiController()
+      this.aiProgressText = `使用 ${config.name || config.model}...`
+      this.addAiLog(`开始 AI 补充，使用 ${config.name || config.model}`, 'info')
+
+      try {
+        const result = await fillDbDocPlaceholders(
+          config,
+          this.schema,
+          (table) => this.getTableComment(table),
+          (col) => this.getColumnComment(col),
+          this.commentOverrides,
+          (msg, level) => {
+            this.addAiLog(msg, level)
+            this.aiProgressText = msg
+          },
+          (batchName, filled, batchTotal) => {
+            this.schema = { ...this.schema }
+          },
+          this.aiController,
+        )
+
+        if (result.total === 0) {
+          this.showToast('没有需要补充的占位符', 'info')
+        } else {
+          this.commentOverrides = result.newOverrides
+          this.showToast(`AI 补充完成: ${result.filled}/${result.total} 个注释已填充`, 'success')
+        }
+      } catch (e) {
+        this.showToast('AI 补充失败: ' + String(e), 'error')
+        this.addAiLog(`失败: ${e.message}`, 'error')
+      }
+
+      this.aiProcessing = false
+      this.aiProgressText = ''
+      this.aiController = null
     },
   },
 }
