@@ -12,7 +12,7 @@ export const LLM_PROVIDERS = [
         id: 'openai',
         label: 'OpenAI',
         baseUrl: 'https://api.openai.com/v1',
-        models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4-turbo', 'gpt-3.5-turbo', 'o1', 'o1-mini', 'o3-mini'],
+        models: ['gpt-5', 'gpt-5-mini', 'gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'o3', 'o3-mini', 'o4-mini'],
     },
     {
         id: 'deepseek',
@@ -24,13 +24,13 @@ export const LLM_PROVIDERS = [
         id: 'qwen',
         label: '通义千问 (Qwen)',
         baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        models: ['qwen-turbo', 'qwen-plus', 'qwen-max', 'qwen-long', 'qwen-vl-plus', 'qwen-vl-max', 'qwen2.5-72b-instruct', 'qwen2.5-32b-instruct'],
+        models: ['qwen-max-latest', 'qwen-plus-latest', 'qwen-turbo-latest', 'qwen3-235b-a22b', 'qwen3-30b-a3b', 'qwq-32b', 'qwen-long'],
     },
     {
         id: 'zhipu',
         label: '智谱 (GLM)',
         baseUrl: 'https://open.bigmodel.cn/api/paas/v4',
-        models: ['glm-4-plus', 'glm-4', 'glm-4-long', 'glm-4-flash', 'glm-4-flashx', 'glm-3-turbo'],
+        models: ['glm-5', 'glm-4-plus', 'glm-4-long', 'glm-4-flash', 'glm-4-flashx', 'glm-z1-air', 'glm-z1-flash'],
     },
     {
         id: 'moonshot',
@@ -42,7 +42,7 @@ export const LLM_PROVIDERS = [
         id: 'baichuan',
         label: '百川智能',
         baseUrl: 'https://api.baichuan-ai.com/v1',
-        models: ['Baichuan4', 'Baichuan3-Turbo', 'Baichuan3-Turbo-128k', 'Baichuan2-Turbo'],
+        models: ['Baichuan4', 'Baichuan3-Turbo', 'Baichuan3-Turbo-128k'],
     },
     {
         id: 'doubao',
@@ -54,32 +54,32 @@ export const LLM_PROVIDERS = [
         id: 'spark',
         label: '讯飞星火',
         baseUrl: 'https://spark-api-open.xf-yun.com/v1',
-        models: ['generalv3.5', 'generalv3', 'generalv2', '4.0Ultra'],
+        models: ['generalv3.5', 'generalv3', '4.0Ultra'],
     },
     {
         id: 'claude',
         label: 'Anthropic (Claude)',
         baseUrl: 'https://api.anthropic.com/v1',
-        models: ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022', 'claude-3-5-haiku-20241022', 'claude-3-opus-20240229'],
+        models: ['claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'claude-haiku-4-20250506', 'claude-3-5-sonnet-20241022'],
         note: '需通过兼容代理使用',
     },
     {
         id: 'gemini',
         label: 'Google (Gemini)',
         baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
-        models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-1.5-pro', 'gemini-1.5-flash'],
+        models: ['gemini-3.1-pro-preview', 'gemini-3.1-flash-lite-preview', 'gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.5-flash-lite-preview-06-17'],
     },
     {
         id: 'siliconflow',
         label: 'SiliconFlow',
         baseUrl: 'https://api.siliconflow.cn/v1',
-        models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen2.5-72B-Instruct', 'THUDM/glm-4-9b-chat'],
+        models: ['deepseek-ai/DeepSeek-V3', 'deepseek-ai/DeepSeek-R1', 'Qwen/Qwen3-235B-A22B', 'Qwen/QwQ-32B'],
     },
     {
         id: 'openrouter',
         label: 'OpenRouter',
         baseUrl: 'https://openrouter.ai/api/v1',
-        models: ['openai/gpt-4o', 'anthropic/claude-sonnet-4', 'google/gemini-2.5-flash', 'deepseek/deepseek-chat'],
+        models: ['openai/gpt-5', 'anthropic/claude-sonnet-4', 'google/gemini-2.5-flash', 'deepseek/deepseek-chat'],
     },
     {
         id: 'custom',
@@ -295,7 +295,12 @@ export async function callLlm(config, messages, options = {}) {
         throw new Error('LLM 返回空结果')
     }
 
-    return data.choices[0].message.content
+    const content = data.choices[0].message?.content
+    if (!content) {
+        throw new Error('LLM 返回了空内容 (content 为 null/undefined)')
+    }
+
+    return content
 }
 
 /**
@@ -306,8 +311,12 @@ export async function testLlmConnection(config) {
         const result = await callLlm(config, [
             { role: 'user', content: '请回复一个JSON: {"status":"ok"}' },
         ], { maxTokens: 64 })
-        const parsed = JSON.parse(result)
-        return { success: true, message: '连接成功', raw: parsed }
+        const parsed = extractJsonFromResponse(result)
+        if (parsed) {
+            return { success: true, message: '连接成功', raw: parsed }
+        }
+        // 即使 JSON 解析失败，只要有返回就算连接成功
+        return { success: true, message: '连接成功（响应非标准 JSON）' }
     } catch (e) {
         return { success: false, message: String(e) }
     }
@@ -542,6 +551,12 @@ function extractJsonFromResponse(text) {
         cleaned = codeBlockMatch[1].trim()
     }
 
+    // 去掉可能的前后多余内容，只保留 JSON 对象
+    const firstBrace = cleaned.indexOf('{')
+    if (firstBrace > 0) {
+        cleaned = cleaned.substring(firstBrace)
+    }
+
     try {
         return JSON.parse(cleaned)
     } catch (e) {
@@ -555,6 +570,30 @@ function extractJsonFromResponse(text) {
                 // ignore
             }
         }
+
+        // 尝试修复截断的 JSON（LLM 输出被 maxTokens 截断）
+        if (start >= 0) {
+            let truncated = cleaned.substring(start)
+            // 去掉最后不完整的字符串值
+            truncated = truncated.replace(/,\s*"[^"]*"\s*:\s*"[^"]*$/, '')
+            truncated = truncated.replace(/,\s*"[^"]*$/, '')
+            // 补全缺少的闭合括号
+            const opens = (truncated.match(/[{\[]/g) || []).length
+            const closes = (truncated.match(/[}\]]/g) || []).length
+            const missing = opens - closes
+            for (let i = 0; i < missing; i++) {
+                // 根据最后一个开括号类型补全
+                const lastOpen = truncated.lastIndexOf('[')
+                const lastObj = truncated.lastIndexOf('{')
+                truncated += lastOpen > lastObj ? ']' : '}'
+            }
+            try {
+                return JSON.parse(truncated)
+            } catch (e3) {
+                // ignore
+            }
+        }
+
         console.error('JSON 提取失败:', cleaned.substring(0, 300))
         return null
     }
