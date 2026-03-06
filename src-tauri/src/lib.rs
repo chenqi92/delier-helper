@@ -20,6 +20,7 @@ pub fn run() {
             commands::db_fetch_schema,
             commands::db_fetch_databases,
             commands::llm_request,
+            commands::llm_get_request,
         ])
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {

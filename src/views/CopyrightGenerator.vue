@@ -4,7 +4,7 @@
       :steps="guideSteps"
       :enabled="guideVisible"
       :conditions="guideConditions"
-      @finish="guideVisible = false"
+      @finish="guideFinished = true"
     />
     <!-- 头部操作栏 -->
     <div class="view-header">
@@ -324,7 +324,7 @@ export default {
     Lightbulb, Ban, Eraser, Eye, RefreshCw, Check, FileDown,
     ChevronDown, Shuffle
   },
-  inject: ['showToast', 'guideEnabled'],
+  inject: ['showToast', 'guide'],
   data() {
     return {
       config: {
@@ -346,7 +346,7 @@ export default {
       lastResult: null,
       dirResults: [],
       currentSeed: null,
-      guideVisible: true,
+      guideFinished: false,
       guideSteps: [
         { target: 'add-dir', text: '点击此处添加源代码目录，支持添加多个目录', doneWhen: 'hasDir' },
         { target: 'detect-types', text: '添加目录后，点击检测文件类型（会自动选中代码文件）', doneWhen: 'hasTypes' },
@@ -381,6 +381,10 @@ export default {
         return b.count - a.count
       })
     },
+    guideVisible() {
+      if (this.guideFinished) return false
+      return !!this.guide?.enabled
+    },
     guideConditions() {
       return {
         hasDir: this.config.directories.length > 0,
@@ -390,14 +394,8 @@ export default {
       }
     },
   },
-  mounted() {
-    this.guideVisible = this.guideEnabled?.value !== false
-  },
   watch: {
-    guideEnabled: {
-      handler(ref) { this.guideVisible = ref?.value !== false },
-      deep: true,
-    },
+    'guide.enabled'(val) { if (val) this.guideFinished = false },
   },
   methods: {
     closeFontDropdown() {

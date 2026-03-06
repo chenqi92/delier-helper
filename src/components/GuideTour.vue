@@ -48,8 +48,13 @@ export default {
   },
   watch: {
     enabled(val) {
-      if (val) this.startTracking()
-      else this.stopTracking()
+      if (val) {
+        this.currentIndex = 0
+        this.autoAdvance()
+        this.startTracking()
+      } else {
+        this.stopTracking()
+      }
     },
     currentIndex() {
       this.updatePosition()

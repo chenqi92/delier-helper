@@ -145,11 +145,38 @@ export const LLM_PROVIDERS = [
         ],
     },
     {
-        id: 'custom',
-        label: '自定义 / 本地部署',
-        baseUrl: '',
+        id: 'ollama',
+        label: 'Ollama (本地)',
+        baseUrl: 'http://localhost:11434/v1',
+        local: true,
+        apiKeyRequired: false,
+        modelsApi: '/api/tags',
         models: [],
-        note: 'Ollama, vLLM, LM Studio 等',
+    },
+    {
+        id: 'lmstudio',
+        label: 'LM Studio (本地)',
+        baseUrl: 'http://localhost:1234/v1',
+        local: true,
+        apiKeyRequired: false,
+        modelsApi: '/v1/models',
+        models: [],
+    },
+    {
+        id: 'vllm',
+        label: 'vLLM (本地)',
+        baseUrl: 'http://localhost:8000/v1',
+        local: true,
+        apiKeyRequired: false,
+        modelsApi: '/v1/models',
+        models: [],
+    },
+    {
+        id: 'custom',
+        label: '自定义 / 其他兼容',
+        baseUrl: '',
+        apiKeyRequired: false,
+        models: [],
     },
 ]
 
@@ -170,7 +197,7 @@ let _configId = 0
 /**
  * 生成唯一配置 ID
  */
-function nextId() {
+export function nextId() {
     return `cfg_${Date.now()}_${++_configId}`
 }
 
@@ -320,6 +347,66 @@ export function getDefaultModels(providerId) {
     return p ? p.models.map(m => ({ ...m })) : []
 }
 
+/**
+ * 自动检测本地 LLM 服务的可用模型列表
+ * @param {Object} providerCfg - 包含 providerId, baseUrl, apiKey 的配置
+ * @returns {Promise<{success: boolean, models: ModelDef[], message: string}>}
+ */
+export async function detectModels(providerCfg) {
+    const { providerId, baseUrl, apiKey } = providerCfg
+    if (!baseUrl) return { success: false, models: [], message: '请先填写 API 地址' }
+
+    const base = baseUrl.replace(/\/+$/, '')
+    const preset = LLM_PROVIDERS.find(p => p.id === providerId)
+
+    // Ollama 使用 /api/tags 接口
+    const isOllama = providerId === 'ollama' || base.includes(':11434')
+    const modelsUrl = isOllama
+        ? base.replace(/\/v1$/, '') + '/api/tags'
+        : base + '/models'
+
+    try {
+        const result = await invoke('llm_get_request', {
+            req: { url: modelsUrl, apiKey: apiKey || '' },
+        })
+
+        if (!result.success) {
+            return { success: false, models: [], message: result.error || `连接失败 (${result.status})` }
+        }
+
+        const data = JSON.parse(result.body)
+        let models = []
+
+        if (isOllama && Array.isArray(data.models)) {
+            // Ollama 格式: { models: [{ name, size, ... }] }
+            models = data.models.map(m => ({
+                id: m.name || m.model,
+                label: (m.name || m.model).split(':')[0],
+                capabilities: {},
+                contextLength: 32768,
+            }))
+        } else if (Array.isArray(data.data)) {
+            // OpenAI 兼容格式: { data: [{ id, ... }] }
+            models = data.data.map(m => ({
+                id: m.id,
+                label: m.id,
+                capabilities: {},
+                contextLength: 32768,
+            }))
+        } else {
+            return { success: false, models: [], message: '无法解析模型列表响应' }
+        }
+
+        if (models.length === 0) {
+            return { success: false, models: [], message: '服务响应正常但未载入任何模型' }
+        }
+
+        return { success: true, models, message: `检测到 ${models.length} 个模型` }
+    } catch (e) {
+        return { success: false, models: [], message: `检测失败: ${e.message || e}` }
+    }
+}
+
 // === 兼容旧 API（供未迁移的代码使用）===
 
 /** @deprecated 使用 loadProviderConfigs */
@@ -418,8 +505,6 @@ export function generateConfigName(config) {
     return `${providerLabel} / ${config.model}`
 }
 
-export { nextId }
-
 // ==================== LLM API 调用 ====================
 
 /**
@@ -442,8 +527,10 @@ export async function callLlm(config, messages, options = {}) {
         max_tokens: maxTokens,
     }
 
-    // Gemini 的 OpenAI 兼容模式不一定支持 response_format
-    if (!isGemini) {
+    // response_format 仅云端厂商支持，本地部署（Ollama/LM Studio/vLLM）和 Gemini 不支持
+    const localIds = ['ollama', 'lmstudio', 'vllm', 'custom']
+    const skipJsonFormat = isGemini || localIds.includes(providerId) || !apiKey
+    if (!skipJsonFormat) {
         reqBody.response_format = { type: 'json_object' }
     }
 

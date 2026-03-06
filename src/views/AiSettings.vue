@@ -74,13 +74,14 @@
               <div class="form-group">
                 <label class="form-label">
                   API 地址 (Base URL)
-                  <span v-if="form.providerId !== 'custom'" class="form-label-hint">(已预填，可修改)</span>
+                  <span v-if="isCurrentLocal" class="form-label-hint">(本地服务地址，已预填)</span>
+                  <span v-else-if="form.providerId !== 'custom'" class="form-label-hint">(已预填，可修改)</span>
                 </label>
                 <input type="text" class="form-input" v-model="form.baseUrl" placeholder="https://api.example.com/v1" />
               </div>
 
               <!-- API Key -->
-              <div class="form-group">
+              <div class="form-group" v-if="!isCurrentLocal">
                 <label class="form-label">API Key</label>
                 <div style="display:flex;gap:6px;">
                   <input :type="showKey ? 'text' : 'password'" class="form-input" style="flex:1;"
@@ -90,6 +91,10 @@
                     <EyeOff v-else :size="14" />
                   </button>
                 </div>
+              </div>
+              <div v-else class="tip" style="margin:0;">
+                <Lightbulb :size="14" class="tip-icon" />
+                <span>本地服务无需 API Key，确保服务已启动后使用「检测模型」获取可用列表</span>
               </div>
 
               <!-- 操作按钮 -->
@@ -113,9 +118,21 @@
           <div class="card">
             <div class="card-header">
               <h3><Layers :size="14" /> 可用模型</h3>
-              <button class="btn btn-secondary btn-sm" @click="showAddModel = true">
-                <Plus :size="12" /> 自定义模型
-              </button>
+              <div style="display:flex;gap:6px;">
+                <button class="btn btn-secondary btn-sm" @click="doDetect" :disabled="detecting || !form.baseUrl">
+                  <span v-if="detecting" class="spinner" style="width:12px;height:12px;"></span>
+                  <Search v-else :size="12" />
+                  {{ detecting ? '检测中...' : '检测模型' }}
+                </button>
+                <button class="btn btn-secondary btn-sm" @click="showAddModel = true">
+                  <Plus :size="12" /> 自定义模型
+                </button>
+              </div>
+            </div>
+            <div v-if="detectResult" style="padding:8px 12px 0;">
+              <span :style="{ fontSize: '12px', color: detectResult.success ? 'var(--success-500)' : 'var(--danger-500)' }">
+                {{ detectResult.message }}
+              </span>
             </div>
             <div class="card-body" style="padding:0;">
               <table class="ai-model-table">
@@ -203,17 +220,17 @@
 <script>
 import {
   Bot, Settings, Check, Eye, EyeOff, Wifi, Save,
-  Plus, Trash2, X, Layers
+  Plus, Trash2, X, Layers, Search, Lightbulb
 } from 'lucide-vue-next'
 import {
   LLM_PROVIDERS, loadProviderConfigs, upsertProviderConfig,
   deleteProviderConfig, testLlmConnection, getDefaultModels,
-  getResolvedConfig, nextId
+  getResolvedConfig, nextId, detectModels
 } from '../core/llm/llm-service.js'
 
 export default {
   name: 'AiSettings',
-  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Plus, Trash2, X, Layers },
+  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Plus, Trash2, X, Layers, Search, Lightbulb },
   inject: ['showToast'],
   data() {
     return {
@@ -224,6 +241,8 @@ export default {
       showKey: false,
       testing: false,
       testResult: null,
+      detecting: false,
+      detectResult: null,
       saved: false,
       showAddModel: false,
       newModel: { id: '', label: '', multimodal: false, deepThinking: false, contextLength: 32768 },
@@ -231,7 +250,16 @@ export default {
   },
   computed: {
     isFormValid() {
-      return this.form && this.form.baseUrl && this.form.apiKey && this.form.models.length > 0
+      if (!this.form || !this.form.baseUrl) return false
+      const preset = this.providerPresets.find(p => p.id === this.form.providerId)
+      const needKey = preset ? preset.apiKeyRequired !== false : true
+      if (needKey && !this.form.apiKey) return false
+      return this.form.models.length > 0
+    },
+    isCurrentLocal() {
+      if (!this.form) return false
+      const preset = this.providerPresets.find(p => p.id === this.form.providerId)
+      return preset ? !!preset.local : false
     },
   },
   async mounted() {
@@ -271,13 +299,21 @@ export default {
 
     onProviderChange() {
       const preset = this.providerPresets.find(p => p.id === this.form.providerId)
-      if (preset && preset.id !== 'custom') {
-        this.form.baseUrl = preset.baseUrl
+      if (preset) {
+        this.form.baseUrl = preset.baseUrl || this.form.baseUrl
         this.form.label = preset.label
-        this.form.models = getDefaultModels(preset.id)
-        this.form.activeModelId = preset.models[0]?.id || ''
+        if (preset.local) {
+          // 本地服务：清空模型列表，等待检测
+          this.form.models = []
+          this.form.apiKey = ''
+          this.form.activeModelId = ''
+        } else if (preset.id !== 'custom') {
+          this.form.models = getDefaultModels(preset.id)
+          this.form.activeModelId = preset.models[0]?.id || ''
+        }
       }
       this.testResult = null
+      this.detectResult = null
       this.saved = false
     },
 
@@ -312,6 +348,23 @@ export default {
         this.testResult = { success: false, message: String(e) }
       }
       this.testing = false
+    },
+
+    async doDetect() {
+      if (!this.form.baseUrl) return
+      this.detecting = true
+      this.detectResult = null
+      try {
+        const result = await detectModels(this.form)
+        this.detectResult = result
+        if (result.success && result.models.length > 0) {
+          this.form.models = result.models
+          this.form.activeModelId = result.models[0].id
+        }
+      } catch (e) {
+        this.detectResult = { success: false, message: String(e) }
+      }
+      this.detecting = false
     },
 
     async save() {

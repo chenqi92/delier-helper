@@ -238,8 +238,10 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
 
     let mut builder = client.post(&url).header("Content-Type", "application/json");
 
-    // 所有提供商都用 Bearer
-    builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+    // apiKey 非空时才发送认证头（本地部署如 Ollama/vLLM 不需要）
+    if !req.api_key.is_empty() {
+        builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+    }
 
     // Gemini 额外带 x-goog-api-key（Google API 另一种标准认证方式）
     if req.is_gemini {
@@ -247,6 +249,65 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
     }
 
     let resp = match builder.body(req.body).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            return LlmResponse {
+                success: false,
+                status: 0,
+                body: String::new(),
+                error: Some(format!("请求失败: {}", e)),
+            }
+        }
+    };
+
+    let status = resp.status().as_u16();
+    let body = resp.text().await.unwrap_or_default();
+    let success = status >= 200 && status < 300;
+    let error = if success {
+        None
+    } else {
+        Some(format!("HTTP {}: {}", status, body))
+    };
+
+    LlmResponse {
+        success,
+        status,
+        body,
+        error,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LlmGetRequest {
+    pub url: String,
+    pub api_key: String,
+}
+
+/// HTTP GET 请求（用于获取模型列表等）
+#[tauri::command]
+pub async fn llm_get_request(req: LlmGetRequest) -> LlmResponse {
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return LlmResponse {
+                success: false,
+                status: 0,
+                body: String::new(),
+                error: Some(format!("创建 HTTP 客户端失败: {}", e)),
+            }
+        }
+    };
+
+    let mut builder = client.get(&req.url);
+    if !req.api_key.is_empty() {
+        builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+    }
+
+    let resp = match builder.send().await {
         Ok(r) => r,
         Err(e) => {
             return LlmResponse {

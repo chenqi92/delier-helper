@@ -4,7 +4,7 @@
       :steps="guideSteps"
       :enabled="guideVisible"
       :conditions="guideConditions"
-      @finish="guideVisible = false"
+      @finish="guideFinished = true"
     />
     <!-- 头部操作栏 -->
     <div class="view-header">
@@ -458,7 +458,7 @@ export default {
     Database, Check, FileDown, FileText, ChevronRight, Filter, Settings,
     Lightbulb, Wifi, Download, GitBranch, Key, Link, X, Bot
   },
-  inject: ['showToast', 'guideEnabled'],
+  inject: ['showToast', 'guide'],
   data() {
     return {
       config: {
@@ -511,7 +511,7 @@ export default {
       providerConfigs: [],
       selectedProviderId: null,
       selectedModelId: null,
-      guideVisible: true,
+      guideFinished: false,
       guideSteps: [
         { target: 'db-test', text: '填写连接信息后，点击测试连接获取数据库列表', doneWhen: 'hasConnected' },
         { target: 'db-fetch', text: '选择数据库后点击获取表结构', doneWhen: 'hasSchema' },
@@ -581,6 +581,10 @@ export default {
         indexes: this.filteredIndexes,
       }
     },
+    guideVisible() {
+      if (this.guideFinished) return false
+      return !!this.guide?.enabled
+    },
     guideConditions() {
       return {
         hasConn: this.isConnConfigComplete,
@@ -590,10 +594,7 @@ export default {
     },
   },
   watch: {
-    guideEnabled: {
-      handler(ref) { this.guideVisible = ref?.value !== false },
-      deep: true,
-    },
+    'guide.enabled'(val) { if (val) this.guideFinished = false },
     viewMode(val) {
       this.diagramScale = 1
       this.diagramX = 0
@@ -624,9 +625,6 @@ export default {
         this.$nextTick(() => this.renderErDiagram())
       }
     },
-  },
-  mounted() {
-    this.guideVisible = this.guideEnabled?.value !== false
   },
   methods: {
     // ===== 数据库类型切换 =====

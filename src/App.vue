@@ -19,9 +19,9 @@
       </div>
       <div class="left-nav-bottom">
         <button
-          :class="['left-nav-item', { active: guideEnabled }]"
+          :class="['left-nav-item', { active: guide.enabled }]"
           @click="toggleGuide"
-          :title="guideEnabled ? '关闭引导' : '开启引导'"
+          :title="guide.enabled ? '关闭引导' : '开启引导'"
         >
           <HelpCircle :size="18" />
           <span class="left-nav-label">引导</span>
@@ -50,22 +50,24 @@
 </template>
 
 <script>
-import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle } from 'lucide-vue-next'
-import { markRaw, computed } from 'vue'
+import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck } from 'lucide-vue-next'
+import { markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
 import CopyrightGenerator from './views/CopyrightGenerator.vue'
 import ApiDocGenerator from './views/ApiDocGenerator.vue'
 import DbDocGenerator from './views/DbDocGenerator.vue'
+import SrsGenerator from './views/SrsGenerator.vue'
+import SddGenerator from './views/SddGenerator.vue'
 import AiSettings from './views/AiSettings.vue'
 import { loadProviderConfigs } from './core/llm/llm-service.js'
 
 export default {
   name: 'App',
-  components: { AiSidebar, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, AiSettings },
+  components: { AiSidebar, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, AiSettings },
   provide() {
     return {
       showToast: this.showToast,
-      guideEnabled: computed(() => this.guideEnabled),
+      guide: this.guide,
     }
   },
   mounted() {
@@ -76,18 +78,22 @@ export default {
     return {
       activeTab: 'copyright',
       theme: 'light',
-      guideEnabled: localStorage.getItem('guideEnabled') !== 'false',
+      guide: reactive({ enabled: localStorage.getItem('guideEnabled') !== 'false' }),
       toast: { show: false, message: '', type: 'info' },
       tabs: [
         { id: 'copyright', label: '软著代码', icon: markRaw(FileCode) },
         { id: 'api-doc',   label: '接口文档', icon: markRaw(Plug) },
         { id: 'db-doc',    label: '数据库文档', icon: markRaw(Database) },
+        { id: 'srs-doc',   label: '需求文档', icon: markRaw(BookOpen) },
+        { id: 'sdd-doc',   label: '设计文档', icon: markRaw(FileCheck) },
         { id: 'ai-settings', label: 'AI 设置', icon: markRaw(Bot) },
       ],
       viewMap: {
         'copyright': 'CopyrightGenerator',
         'api-doc': 'ApiDocGenerator',
         'db-doc': 'DbDocGenerator',
+        'srs-doc': 'SrsGenerator',
+        'sdd-doc': 'SddGenerator',
         'ai-settings': 'AiSettings',
       },
     }
@@ -102,8 +108,8 @@ export default {
       this.theme = this.theme === 'dark' ? 'light' : 'dark'
     },
     toggleGuide() {
-      this.guideEnabled = !this.guideEnabled
-      localStorage.setItem('guideEnabled', this.guideEnabled)
+      this.guide.enabled = !this.guide.enabled
+      localStorage.setItem('guideEnabled', this.guide.enabled)
     },
     showToast(message, type = 'info') {
       this.toast = { show: true, message, type }

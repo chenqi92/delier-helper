@@ -4,7 +4,7 @@
       :steps="guideSteps"
       :enabled="guideVisible"
       :conditions="guideConditions"
-      @finish="guideVisible = false"
+      @finish="guideFinished = true"
     />
     <!-- 头部操作栏 -->
     <div class="view-header">
@@ -427,7 +427,7 @@ export default {
     FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
     Plug, Filter, Settings, ChevronRight, Scan, Bot
   },
-  inject: ['showToast', 'guideEnabled'],
+  inject: ['showToast', 'guide'],
   data() {
     return {
       projectDir: '',
@@ -451,7 +451,7 @@ export default {
       providerConfigs: [],
       selectedProviderId: null,
       selectedModelId: null,
-      guideVisible: true,
+      guideFinished: false,
       guideSteps: [
         { target: 'api-select-dir', text: '选择 Spring Boot 项目的根目录', doneWhen: 'hasProject' },
         { target: 'api-start-parse', text: '点击开始解析接口文档', doneWhen: 'hasParsed' },
@@ -496,6 +496,10 @@ export default {
     },
     enabledDocModules() {
       return this.docModules.filter(m => m.enabled)
+    },
+    guideVisible() {
+      if (this.guideFinished) return false
+      return !!this.guide?.enabled
     },
     guideConditions() {
       return {
@@ -550,14 +554,8 @@ export default {
       return allApis
     },
   },
-  mounted() {
-    this.guideVisible = this.guideEnabled?.value !== false
-  },
   watch: {
-    guideEnabled: {
-      handler(ref) { this.guideVisible = ref?.value !== false },
-      deep: true,
-    },
+    'guide.enabled'(val) { if (val) this.guideFinished = false },
   },
   methods: {
     // ===== 项目选择 =====
