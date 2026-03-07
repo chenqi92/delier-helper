@@ -83,7 +83,20 @@
 
 ## 📸 截图
 
-<!-- ![主界面](screenshots/main.png) -->
+![软著截图](https://nas.allbs.cn:8888/cloudpic/2026/03/459ec3f808031e79a4ad477096079f6a.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/3fa396c4f7c789b37e5138f83d155cf0.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/012586f94fc223024694f8f416479f67.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/260cd6c952c34abae81685732e694a5f.png)
+
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/3a089694f95271e5f1b9dcdaa0995f73.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/b732f1d5e60e47b8fff50f855929005a.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/8db22101854f8367f5bdcb3adfb414c0.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/96c915da1cc9ce9c2e8a19c543a10901.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/b732f1d5e60e47b8fff50f855929005a.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/48d41411dfd8299781453ece5b55c1e4.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/2d27ac1b2bc6b41da79e03d3b5e333f7.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/eeb21590ead37816c6413ce91401fc4f.png)
+![](https://nas.allbs.cn:8888/cloudpic/2026/03/1f592d61bf5cf8786d7c135e677c9056.png)
 
 ---
 
