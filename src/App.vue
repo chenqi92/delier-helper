@@ -46,6 +46,9 @@
         <AiSidebar />
       </div>
     </div>
+
+    <!-- 自动更新检查 -->
+    <UpdateChecker />
   </div>
 </template>
 
@@ -53,6 +56,7 @@
 import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck } from 'lucide-vue-next'
 import { markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
+import UpdateChecker from './components/UpdateChecker.vue'
 import CopyrightGenerator from './views/CopyrightGenerator.vue'
 import ApiDocGenerator from './views/ApiDocGenerator.vue'
 import DbDocGenerator from './views/DbDocGenerator.vue'
@@ -63,7 +67,7 @@ import { globalStore, initStore } from './core/global-store.js'
 
 export default {
   name: 'App',
-  components: { AiSidebar, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, AiSettings },
+  components: { AiSidebar, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, AiSettings },
   provide() {
     return {
       showToast: this.showToast,
