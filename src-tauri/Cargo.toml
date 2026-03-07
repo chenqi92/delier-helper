@@ -1,6 +1,6 @@
 [package]
 name = "deliver-helper"
-version = "0.1.5"
+version = "0.1.6"
 description = "交付助手"
 authors = ["chenqi"]
 edition = "2021"
