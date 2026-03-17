@@ -53,7 +53,7 @@
 </template>
 
 <script>
-import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck } from 'lucide-vue-next'
+import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server } from 'lucide-vue-next'
 import { markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
 import UpdateChecker from './components/UpdateChecker.vue'
@@ -62,12 +62,13 @@ import ApiDocGenerator from './views/ApiDocGenerator.vue'
 import DbDocGenerator from './views/DbDocGenerator.vue'
 import SrsGenerator from './views/SrsGenerator.vue'
 import SddGenerator from './views/SddGenerator.vue'
+import OpsManualGenerator from './views/OpsManualGenerator.vue'
 import AiSettings from './views/AiSettings.vue'
 import { globalStore, initStore } from './core/global-store.js'
 
 export default {
   name: 'App',
-  components: { AiSidebar, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, AiSettings },
+  components: { AiSidebar, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, AiSettings, Server },
   provide() {
     return {
       showToast: this.showToast,
@@ -90,6 +91,7 @@ export default {
         { id: 'db-doc',    label: '数据库文档', icon: markRaw(Database) },
         { id: 'srs-doc',   label: '需求文档', icon: markRaw(BookOpen) },
         { id: 'sdd-doc',   label: '设计文档', icon: markRaw(FileCheck) },
+        { id: 'ops-doc',   label: '运维手册', icon: markRaw(Server) },
         { id: 'ai-settings', label: 'AI 设置', icon: markRaw(Bot) },
       ],
       viewMap: {
@@ -98,6 +100,7 @@ export default {
         'db-doc': 'DbDocGenerator',
         'srs-doc': 'SrsGenerator',
         'sdd-doc': 'SddGenerator',
+        'ops-doc': 'OpsManualGenerator',
         'ai-settings': 'AiSettings',
       },
     }

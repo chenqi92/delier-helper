@@ -1,6 +1,7 @@
 mod commands;
 mod db_connector;
 mod scanner;
+mod ssh_connector;
 
 use tauri::Manager;
 
@@ -27,6 +28,9 @@ pub fn run() {
             commands::db_fetch_databases,
             commands::llm_request,
             commands::llm_get_request,
+            ssh_connector::ssh_test_connection,
+            ssh_connector::ssh_exec_command,
+            ssh_connector::ssh_read_server_info,
         ])
         .setup(|app| {
             #[cfg(desktop)]

@@ -475,3 +475,7 @@ export function getSddPresets() {
         },
     ]
 }
+
+// ==================== OPS 预设（从独立文件重新导出） ====================
+
+export { getOpsPresets } from './ops-template.js'
