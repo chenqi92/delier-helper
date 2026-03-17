@@ -36,11 +36,11 @@
             <option v-for="m in currentProviderModels" :key="m.id" :value="m.id">{{ m.label || m.id }}</option>
           </select>
         </div>
-        <button class="btn btn-primary btn-sm" @click="exportMarkdown" :disabled="!parseResult">
-          <FileText :size="14" /> 导出 Markdown
-        </button>
         <button class="btn btn-primary btn-sm" @click="exportWord" :disabled="!parseResult">
           <FileDown :size="14" /> 导出 Word
+        </button>
+        <button class="btn btn-secondary btn-sm" @click="exportMarkdown" :disabled="!parseResult">
+          <FileDown :size="14" /> 导出 MD
         </button>
       </div>
     </div>

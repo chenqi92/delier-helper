@@ -40,11 +40,27 @@ function makeText(text, options = {}) {
 }
 
 function makeCell(text, options = {}) {
+    // 处理单元格中可能包含的 <br> 换行和代码块
+    const cleanText = String(text || '')
+        .replace(/<br\s*\/?>/gi, '\n')   // <br> → 换行
+        .replace(/```[\w]*\n?/g, '')      // 去除代码块标记
+        .replace(/<[^>]+>/g, '')          // 清理其他 HTML 标签
+        .trim()
+    const lines = cleanText.split('\n').filter(l => l.trim() !== '')
+    const children = lines.map(line => {
+        const runs = options.bold
+            ? [makeText(line.trim().replace(/\*\*/g, ''), { size: 18, bold: true })]
+            : parseInlineFormatting(line.trim())
+        return new Paragraph({
+            children: runs,
+            spacing: { before: 20, after: 20 },
+        })
+    })
+    if (children.length === 0) {
+        children.push(new Paragraph({ children: [makeText('', { size: 18, bold: options.bold })], spacing: { before: 20, after: 20 } }))
+    }
     return new TableCell({
-        children: [new Paragraph({
-            children: [makeText(text, { size: 18, ...options })],
-            spacing: { before: 40, after: 40 },
-        })],
+        children,
         width: options.width ? { size: options.width, type: WidthType.PERCENTAGE } : undefined,
         shading: options.shading ? { fill: options.shading } : undefined,
     })
@@ -225,7 +241,16 @@ function parseMarkdownToParagraphs(markdownText) {
                 continue
             }
             inTable = true
-            const cells = line.trim().split('|').filter(c => c.trim() !== '').map(c => c.trim())
+            let cells = line.trim().split('|').filter(c => c.trim() !== '').map(c => c.trim())
+            // 列数修正：如果数据行列数超过表头列数，将多余列合并到最后一列
+            if (tableRows.length > 0) {
+                const headerColCount = tableRows[0].length
+                if (cells.length > headerColCount) {
+                    const merged = cells.slice(0, headerColCount - 1)
+                    merged.push(cells.slice(headerColCount - 1).join('、'))
+                    cells = merged
+                }
+            }
             tableRows.push(cells)
             continue
         } else if (inTable && tableRows.length > 0) {
@@ -282,22 +307,39 @@ function parseMarkdownToParagraphs(markdownText) {
  * 解析行内格式（加粗）
  */
 function parseInlineFormatting(text) {
+    // 先清理 <br> 和其他 HTML 标签
+    let cleanText = text
+        .replace(/<br\s*\/?>/gi, ' ')     // <br> → 空格（行内场景）
+        .replace(/<[^>]+>/g, '')          // 清理其他 HTML 标签
+
     const runs = []
-    const regex = /\*\*(.+?)\*\*/g
+    // 匹配 **bold**、`code`
+    const regex = /\*\*(.+?)\*\*|`([^`]+)`/g
     let lastIndex = 0
     let match
-    while ((match = regex.exec(text)) !== null) {
+    while ((match = regex.exec(cleanText)) !== null) {
         if (match.index > lastIndex) {
-            runs.push(makeText(text.substring(lastIndex, match.index)))
+            runs.push(makeText(cleanText.substring(lastIndex, match.index)))
         }
-        runs.push(makeText(match[1], { bold: true }))
+        if (match[1]) {
+            // **bold**
+            runs.push(makeText(match[1], { bold: true }))
+        } else if (match[2]) {
+            // `code`
+            runs.push(new TextRun({
+                text: match[2],
+                font: { name: 'Consolas', eastAsia: FONT_NAME },
+                size: 19,
+                color: '333333',
+            }))
+        }
         lastIndex = regex.lastIndex
     }
-    if (lastIndex < text.length) {
-        runs.push(makeText(text.substring(lastIndex)))
+    if (lastIndex < cleanText.length) {
+        runs.push(makeText(cleanText.substring(lastIndex)))
     }
     if (runs.length === 0) {
-        runs.push(makeText(text))
+        runs.push(makeText(cleanText))
     }
     return runs
 }

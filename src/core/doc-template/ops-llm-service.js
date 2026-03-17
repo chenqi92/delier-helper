@@ -16,13 +16,27 @@ export function buildOpsSectionPrompt(section, contextSummary, docInfo = {}) {
 输出要求：
 1. 使用正式的技术文档语言，适合运维人员阅读
 2. 直接输出章节内容，不要带章节编号和标题前缀（用户已有标题）
-3. 如果是表格类型，使用标准 Markdown 表格格式
-4. 代码块请使用 \`\`\`bash 或对应语言的代码块格式
+3. 如果是表格类型，使用标准 Markdown 表格格式：
+   - 每个单元格内容必须在一行内完成，绝对不要在单元格中使用换行
+   - 每个单元格内容不超过 80 字，保持简洁
+   - 单元格中不要嵌入代码块（\`\`\`），如需命令请用行内代码 \`command\`
+   - 不要在表格单元格中使用编号列表
+   - 严禁在单元格内容中使用 | 管道符号，多个值请用顿号（、）或逗号分隔
+4. 代码块请使用 \`\`\`bash 或对应语言的代码块格式（仅在非表格内容中使用）
 5. 命令行操作使用 bash 代码块
 6. 不要输出任何解释性前言或总结（例如"以下是..."）
-7. 端口、IP、路径等信息请使用服务器扫描实际检测到的值
-8. 密码和敏感信息请使用占位符 ********
-9. 保持内容实用、可操作，运维人员可以直接照做`
+7. 严禁使用任何 HTML 标签（如 <br>、<code>、<strong> 等），只使用纯 Markdown 格式
+8. 内容要紧凑，避免不必要的空行和冗余说明
+9. 保持内容实用、可操作，运维人员可以直接照做
+
+安全规则（必须严格遵守）：
+- 内网 IP（10.x.x.x、172.16-31.x.x、192.168.x.x）和端口可以正常出现在文档中
+- 在「访问地址」「对外服务地址」「Web 管理界面地址」等场景中，外网/公网 IP 可以正常出现
+- 在服务器配置总览、硬件环境等内部管理表格中，不要列出外网 IP 列
+- 严禁出现密码、API Key、Token、Secret 等敏感信息，一律使用 \`********\` 占位
+- 严禁出现数据库连接密码、SSH 密码、登录凭证等
+- 不要在文档中放置完整的 SSH 登录参数（IP+端口+账号+密码的组合）
+- 用户名可以保留（如 root、admin），但密码必须屏蔽`
 
     const userMsg = `${contextSummary}
 
@@ -145,6 +159,22 @@ export function buildOpsContextSummary(scanResult, serverInfos = [], docInfo = {
                 parts.push('```')
             }
 
+            // LVM 磁盘布局
+            if (d.lvmInfo && d.lvmInfo.trim() && !d.lvmInfo.includes('command not found')) {
+                parts.push('\n**LVM 磁盘布局**:')
+                parts.push('```')
+                parts.push(d.lvmInfo.trim())
+                parts.push('```')
+            }
+
+            // 网络接口
+            if (d.networkInterfaces && d.networkInterfaces.trim()) {
+                parts.push('\n**网络接口**:')
+                parts.push('```')
+                parts.push(d.networkInterfaces.trim().split('\n').slice(0, 30).join('\n'))
+                parts.push('```')
+            }
+
             // 软件版本
             if (d.softwareVersions) {
                 const versions = d.softwareVersions
@@ -158,6 +188,30 @@ export function buildOpsContextSummary(scanResult, serverInfos = [], docInfo = {
                 }
             }
 
+            // 软件安装路径
+            if (d.softwarePaths && d.softwarePaths.trim()) {
+                parts.push('\n**软件安装路径**:')
+                parts.push('```')
+                parts.push(d.softwarePaths.trim())
+                parts.push('```')
+            }
+
+            // JAR/WAR 应用文件
+            if (d.appFiles && d.appFiles.trim()) {
+                parts.push('\n**发现的应用文件 (JAR/WAR)**:')
+                parts.push('```')
+                parts.push(d.appFiles.trim())
+                parts.push('```')
+            }
+
+            // 部署脚本
+            if (d.deployScripts && d.deployScripts.trim()) {
+                parts.push('\n**部署/启动脚本**:')
+                parts.push('```')
+                parts.push(d.deployScripts.trim())
+                parts.push('```')
+            }
+
             // systemd 服务
             if (d.systemdServices && d.systemdServices.trim()) {
                 parts.push('\n**运行中的 systemd 服务**:')
@@ -166,11 +220,35 @@ export function buildOpsContextSummary(scanResult, serverInfos = [], docInfo = {
                 parts.push('```')
             }
 
+            // systemd 服务配置详情
+            if (d.systemdServiceConfigs && d.systemdServiceConfigs.trim()) {
+                parts.push('\n**自定义 systemd 服务配置**:')
+                parts.push('```ini')
+                parts.push(d.systemdServiceConfigs.trim().split('\n').slice(0, 100).join('\n'))
+                parts.push('```')
+            }
+
+            // 关键进程运行参数
+            if (d.javaProcesses && d.javaProcesses.trim()) {
+                parts.push('\n**关键进程运行参数**:')
+                parts.push('```')
+                parts.push(d.javaProcesses.trim())
+                parts.push('```')
+            }
+
             // Docker 容器
             if (d.dockerContainers && d.dockerContainers.trim()) {
                 parts.push('\n**Docker 容器**:')
                 parts.push('```')
                 parts.push(d.dockerContainers.trim())
+                parts.push('```')
+            }
+
+            // docker-compose 配置文件路径
+            if (d.dockerComposeConfigs && d.dockerComposeConfigs.trim()) {
+                parts.push('\n**Docker Compose 配置文件**:')
+                parts.push('```')
+                parts.push(d.dockerComposeConfigs.trim())
                 parts.push('```')
             }
 
@@ -190,11 +268,27 @@ export function buildOpsContextSummary(scanResult, serverInfos = [], docInfo = {
                 parts.push('```')
             }
 
+            // 定时任务
+            if (d.crontabInfo && d.crontabInfo.trim()) {
+                parts.push('\n**定时任务**:')
+                parts.push('```')
+                parts.push(d.crontabInfo.trim())
+                parts.push('```')
+            }
+
+            // 防火墙规则
+            if (d.firewallRules && d.firewallRules.trim() && !d.firewallRules.includes('no firewall detected')) {
+                parts.push('\n**防火墙规则**:')
+                parts.push('```')
+                parts.push(d.firewallRules.trim().split('\n').slice(0, 30).join('\n'))
+                parts.push('```')
+            }
+
             // 目录结构
             if (d.dirStructure && d.dirStructure.trim()) {
-                parts.push('\n**常见部署目录**:')
+                parts.push('\n**部署目录结构**:')
                 parts.push('```')
-                parts.push(d.dirStructure.trim().split('\n').slice(0, 40).join('\n'))
+                parts.push(d.dirStructure.trim().split('\n').slice(0, 50).join('\n'))
                 parts.push('```')
             }
 

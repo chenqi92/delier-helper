@@ -119,32 +119,6 @@
           </div>
         </div>
 
-        <!-- 章节控制 -->
-        <div class="card" data-guide="ops-chapters">
-          <div class="card-header">
-            <h3><Settings :size="14" /> 章节控制</h3>
-            <div style="display:flex;gap:4px;">
-              <span class="select-action" @click="toggleAllSections(true)">全选</span>
-              <span class="select-action" @click="toggleAllSections(false)">全不选</span>
-            </div>
-          </div>
-          <div class="card-body" style="max-height:300px;overflow-y:auto;">
-            <div v-for="sec in sections" :key="sec.id">
-              <label class="checkbox-label section-tree-item" :style="{ paddingLeft: '0px', fontWeight: 'bold' }">
-                <input type="checkbox" v-model="sec.enabled" @change="toggleChildSections(sec, sec.enabled)" />
-                <span>{{ sec.number }} {{ sec.title }}</span>
-              </label>
-              <div v-if="sec.children && sec.children.length > 0" style="padding-left:16px;">
-                <label v-for="child in sec.children" :key="child.id" class="checkbox-label section-tree-item">
-                  <input type="checkbox" v-model="child.enabled" />
-                  <span style="font-size:12px;">{{ child.number }} {{ child.title }}</span>
-                  <span v-if="child.type === 'diagram'" class="badge badge-info" style="font-size:10px;margin-left:4px;">图</span>
-                  <span v-if="child.type === 'table'" class="badge badge-warning" style="font-size:10px;margin-left:4px;">表</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </div>
       </aside>
 
       <!-- 右侧预览/编辑区 -->

@@ -54,101 +54,142 @@
         </button>
       </div>
 
-      <!-- 模板编辑器 -->
-      <div v-if="showEditor" class="template-editor">
-        <div class="template-editor-header">
-          <span style="font-size:12px;color:var(--text-secondary);">点击章节可编辑标题和类型，可拖拽排序</span>
+      <!-- 章节树（合并了章节控制和编辑功能） -->
+      <div class="ts-chapter-tree" :class="{ 'editing': showEditor }">
+        <div class="ts-tree-header">
+          <span style="font-size:11px;color:var(--text-muted);">{{ showEditor ? '拖拽排序 · 点击编辑' : '勾选需要生成的章节' }}</span>
+          <div style="display:flex;gap:4px;">
+            <span class="select-action" @click="toggleAll(true)">全选</span>
+            <span class="select-action" @click="toggleAll(false)">全不选</span>
+          </div>
         </div>
-        <div class="template-editor-tree">
-          <div v-for="(sec, secIdx) in sections" :key="sec.id" class="te-section">
-            <div class="te-section-header">
-              <div style="display:flex;align-items:center;gap:4px;flex:1;min-width:0;">
-                <span class="te-number">{{ sec.number }}</span>
-                <input
-                  class="te-title-input"
-                  :value="sec.title"
-                  @change="updateTitle(sec, $event.target.value)"
-                  :title="sec.title"
-                />
-                <select class="te-type-select" :value="sec.type" @change="updateType(sec, $event.target.value)">
+        <div class="ts-tree-body">
+          <div v-for="(sec, secIdx) in sections" :key="sec.id" class="ts-sec">
+            <div class="ts-sec-row">
+              <label class="ts-checkbox-label">
+                <input type="checkbox" v-model="sec.enabled" @change="toggleChildren(sec, sec.enabled)" />
+                <span class="ts-sec-number">{{ sec.number }}</span>
+                <template v-if="showEditor">
+                  <input
+                    class="ts-title-input"
+                    :value="sec.title"
+                    @change="updateTitle(sec, $event.target.value)"
+                    :title="sec.title"
+                  />
+                </template>
+                <span v-else class="ts-sec-title">{{ sec.title }}</span>
+              </label>
+              <div v-if="showEditor" class="ts-sec-actions">
+                <select class="ts-type-select" :value="sec.type" @change="updateType(sec, $event.target.value)">
                   <option value="text">文本</option>
                   <option value="table">表格</option>
                   <option value="diagram">图表</option>
                   <option value="image">图片</option>
                 </select>
-              </div>
-              <div style="display:flex;gap:2px;">
                 <button class="te-btn" @click="addChild(sec)" title="添加子章节">+子</button>
-                <button class="te-btn" @click="moveSection(secIdx, -1, sections)" title="上移" :disabled="secIdx === 0">▲</button>
-                <button class="te-btn" @click="moveSection(secIdx, 1, sections)" title="下移" :disabled="secIdx === sections.length - 1">▼</button>
-                <button class="te-btn te-btn-danger" @click="removeSection(secIdx, sections)" title="删除">✕</button>
+                <button class="te-btn" @click="moveSection(secIdx, -1, sections)" :disabled="secIdx === 0">▲</button>
+                <button class="te-btn" @click="moveSection(secIdx, 1, sections)" :disabled="secIdx === sections.length - 1">▼</button>
+                <button class="te-btn te-btn-danger" @click="removeSection(secIdx, sections)">✕</button>
+              </div>
+              <div v-else class="ts-sec-badges">
+                <span v-if="sec.type === 'diagram'" class="badge badge-info" style="font-size:9px;">图</span>
+                <span v-if="sec.type === 'table'" class="badge badge-warning" style="font-size:9px;">表</span>
               </div>
             </div>
 
             <!-- 子章节 -->
-            <div v-if="sec.children && sec.children.length > 0" class="te-children">
-              <div v-for="(child, childIdx) in sec.children" :key="child.id" class="te-child-row">
-                <span class="te-number">{{ child.number }}</span>
-                <input
-                  class="te-title-input"
-                  :value="child.title"
-                  @change="updateTitle(child, $event.target.value)"
-                />
-                <select class="te-type-select" :value="child.type" @change="updateType(child, $event.target.value)">
-                  <option value="text">文本</option>
-                  <option value="table">表格</option>
-                  <option value="diagram">图表</option>
-                  <option value="image">图片</option>
-                </select>
-                <button class="te-btn" @click="moveSection(childIdx, -1, sec.children)" :disabled="childIdx === 0">▲</button>
-                <button class="te-btn" @click="moveSection(childIdx, 1, sec.children)" :disabled="childIdx === sec.children.length - 1">▼</button>
-                <button class="te-btn te-btn-danger" @click="removeSection(childIdx, sec.children)">✕</button>
-                <button class="te-btn" @click="editPrompt(child)" title="编辑 prompt">📝</button>
+            <div v-if="sec.children && sec.children.length > 0" class="ts-children">
+              <div v-for="(child, childIdx) in sec.children" :key="child.id" class="ts-child-row">
+                <label class="ts-checkbox-label">
+                  <input type="checkbox" v-model="child.enabled" />
+                  <span class="ts-sec-number">{{ child.number }}</span>
+                  <template v-if="showEditor">
+                    <input
+                      class="ts-title-input"
+                      :value="child.title"
+                      @change="updateTitle(child, $event.target.value)"
+                    />
+                  </template>
+                  <span v-else class="ts-sec-title" style="font-size:12px;">{{ child.title }}</span>
+                </label>
+                <div v-if="showEditor" class="ts-sec-actions">
+                  <select class="ts-type-select" :value="child.type" @change="updateType(child, $event.target.value)">
+                    <option value="text">文本</option>
+                    <option value="table">表格</option>
+                    <option value="diagram">图表</option>
+                    <option value="image">图片</option>
+                  </select>
+                  <button class="te-btn" @click="editPrompt(child)" title="编辑 Prompt">📝</button>
+                  <button class="te-btn" @click="moveSection(childIdx, -1, sec.children)" :disabled="childIdx === 0">▲</button>
+                  <button class="te-btn" @click="moveSection(childIdx, 1, sec.children)" :disabled="childIdx === sec.children.length - 1">▼</button>
+                  <button class="te-btn te-btn-danger" @click="removeSection(childIdx, sec.children)">✕</button>
+                </div>
+                <div v-else class="ts-sec-badges">
+                  <span v-if="child.type === 'diagram'" class="badge badge-info" style="font-size:9px;">图</span>
+                  <span v-if="child.type === 'table'" class="badge badge-warning" style="font-size:9px;">表</span>
+                </div>
               </div>
             </div>
           </div>
-          <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;" @click="addTopSection">
+          <button v-if="showEditor" class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;" @click="addTopSection">
             + 添加一级章节
           </button>
         </div>
+      </div>
 
-        <!-- Prompt 编辑弹窗 -->
-        <div v-if="editingPromptSection" class="prompt-editor-overlay" @click.self="editingPromptSection = null">
-          <div class="prompt-editor-dialog">
-            <div class="prompt-editor-header">
-              <span>编辑 Prompt: {{ editingPromptSection.number }} {{ editingPromptSection.title }}</span>
-              <button class="btn btn-sm btn-icon" @click="editingPromptSection = null"><X :size="14" /></button>
+      <!-- Prompt 编辑弹窗 -->
+      <Teleport to="body">
+        <div v-if="editingPromptSection" class="prompt-overlay" @click.self="editingPromptSection = null">
+          <div class="prompt-dialog">
+            <div class="prompt-dialog-header">
+              <div class="prompt-dialog-title">
+                <span class="prompt-dialog-badge">Prompt</span>
+                {{ editingPromptSection.number }} {{ editingPromptSection.title }}
+              </div>
+              <button class="prompt-dialog-close" @click="editingPromptSection = null">
+                <X :size="16" />
+              </button>
             </div>
-            <textarea
-              class="prompt-editor-textarea"
-              v-model="editingPromptSection.prompt"
-              rows="10"
-              placeholder="输入 AI 生成指令..."
-            ></textarea>
+            <div class="prompt-dialog-body">
+              <textarea
+                class="prompt-dialog-textarea"
+                v-model="editingPromptSection.prompt"
+                rows="12"
+                placeholder="输入 AI 生成指令..."
+              ></textarea>
+            </div>
+            <div class="prompt-dialog-footer">
+              <span class="prompt-dialog-hint">此 Prompt 会作为 AI 生成该章节内容时的指令</span>
+              <button class="btn btn-primary btn-sm" @click="editingPromptSection = null">确定</button>
+            </div>
           </div>
         </div>
-      </div>
+      </Teleport>
 
       <!-- 保存模板弹窗 -->
-      <div v-if="showSaveDialog" class="prompt-editor-overlay" @click.self="showSaveDialog = false">
-        <div class="prompt-editor-dialog" style="max-width:360px;">
-          <div class="prompt-editor-header">
-            <span>保存为自定义模板</span>
-            <button class="btn btn-sm btn-icon" @click="showSaveDialog = false"><X :size="14" /></button>
-          </div>
-          <div style="padding:12px;display:flex;flex-direction:column;gap:8px;">
-            <div class="form-group">
-              <label class="form-label">模板名称</label>
-              <input type="text" class="form-input" v-model="saveName" placeholder="我的自定义模板" />
+      <Teleport to="body">
+        <div v-if="showSaveDialog" class="prompt-overlay" @click.self="showSaveDialog = false">
+          <div class="prompt-dialog" style="max-width:380px;">
+            <div class="prompt-dialog-header">
+              <div class="prompt-dialog-title">保存为自定义模板</div>
+              <button class="prompt-dialog-close" @click="showSaveDialog = false">
+                <X :size="16" />
+              </button>
             </div>
-            <div class="form-group">
-              <label class="form-label">描述（可选）</label>
-              <input type="text" class="form-input" v-model="saveDesc" placeholder="简要描述" />
+            <div style="padding:16px;display:flex;flex-direction:column;gap:10px;">
+              <div class="form-group">
+                <label class="form-label">模板名称</label>
+                <input type="text" class="form-input" v-model="saveName" placeholder="我的自定义模板" />
+              </div>
+              <div class="form-group">
+                <label class="form-label">描述（可选）</label>
+                <input type="text" class="form-input" v-model="saveDesc" placeholder="简要描述" />
+              </div>
+              <button class="btn btn-primary btn-sm" @click="confirmSave" :disabled="!saveName.trim()">保存</button>
             </div>
-            <button class="btn btn-primary btn-sm" @click="confirmSave" :disabled="!saveName.trim()">保存</button>
           </div>
         </div>
-      </div>
+      </Teleport>
     </div>
   </div>
 </template>
@@ -166,7 +207,7 @@ export default {
   components: { Layout, Save, Edit, Trash2, X, ChevronLeft, ChevronRight, Upload },
   inject: ['showToast'],
   props: {
-    docType: { type: String, required: true }, // 'srs' | 'sdd'
+    docType: { type: String, default: 'srs' },
     sections: { type: Array, required: true },
   },
   emits: ['switch-template', 'update-sections'],
@@ -205,6 +246,28 @@ export default {
     }
   },
   methods: {
+    // ===== 章节控制 =====
+    toggleAll(enabled) {
+      const walk = (list) => {
+        for (const s of list) {
+          s.enabled = enabled
+          if (s.children) walk(s.children)
+        }
+      }
+      walk(this.sections)
+    },
+    toggleChildren(parent, enabled) {
+      if (parent.children) {
+        for (const child of parent.children) {
+          child.enabled = enabled
+          if (child.children) {
+            for (const sub of child.children) sub.enabled = enabled
+          }
+        }
+      }
+    },
+
+    // ===== 模板操作 =====
     async uploadTemplate() {
       if (this.uploading) return
       try {
@@ -230,19 +293,14 @@ export default {
         })
 
         this.customTemplates = await loadCustomTemplates(this.docType)
+        // 自动选中并应用
         this.currentPresetId = tpl.id
-
-        // 直接切换到该模板
-        this.$emit('switch-template', sections)
-        this.showToast(`已从文档导入 ${sections.length} 个章节`, 'success')
-
-        // 更新滚动状态
-        this.$nextTick(() => this.checkScrollState())
+        this.$emit('switch-template', instantiateTemplate(tpl))
+        this.showToast(`模板「${tpl.name}」已导入并应用`, 'success')
       } catch (e) {
-        this.showToast(`导入失败: ${e.message || e}`, 'error')
-      } finally {
-        this.uploading = false
+        this.showToast('导入失败: ' + String(e), 'error')
       }
+      this.uploading = false
     },
 
     selectPreset(preset) {
@@ -250,72 +308,73 @@ export default {
       const sections = instantiateTemplate(preset)
       this.$emit('switch-template', sections)
     },
-    async saveAsCurrent() {
+
+    async deletePreset(preset) {
+      await deleteCustomTemplate(this.docType, preset.id)
+      this.customTemplates = await loadCustomTemplates(this.docType)
+      this.showToast('模板已删除', 'success')
+    },
+
+    saveAsCurrent() {
       this.saveName = ''
       this.saveDesc = ''
       this.showSaveDialog = true
     },
+
     async confirmSave() {
-      if (!this.saveName.trim()) return
-      const skeleton = toTemplateSkeleton(this.sections)
       const tpl = await saveCustomTemplate(this.docType, {
         name: this.saveName.trim(),
         description: this.saveDesc.trim(),
-        sections: skeleton,
+        sections: toTemplateSkeleton(this.sections),
       })
       this.customTemplates = await loadCustomTemplates(this.docType)
       this.currentPresetId = tpl.id
       this.showSaveDialog = false
       this.showToast('模板已保存', 'success')
     },
-    async deletePreset(preset) {
-      if (!confirm(`确定删除模板「${preset.name}」？`)) return
-      await deleteCustomTemplate(this.docType, preset.id)
-      this.customTemplates = await loadCustomTemplates(this.docType)
-      this.showToast('模板已删除', 'success')
-    },
-    // ===== 编辑器操作 =====
-    updateTitle(sec, title) {
-      sec.title = title
+
+    // ===== 章节编辑 =====
+    updateTitle(sec, newTitle) {
+      sec.title = newTitle
       this.$emit('update-sections', this.sections)
     },
-    updateType(sec, type) {
-      sec.type = type
+    updateType(sec, newType) {
+      sec.type = newType
       this.$emit('update-sections', this.sections)
     },
     addChild(parent) {
       if (!parent.children) parent.children = []
-      parent.children.push(createSectionNode({ title: '新子章节' }))
+      parent.children.push(createSectionNode('新子章节'))
       renumberSections(this.sections)
       this.$emit('update-sections', this.sections)
     },
     addTopSection() {
-      this.sections.push(createSectionNode({ title: '新章节', children: [] }))
+      this.sections.push(createSectionNode('新章节'))
       renumberSections(this.sections)
       this.$emit('update-sections', this.sections)
     },
-    moveSection(idx, direction, arr) {
-      const newIdx = idx + direction
-      if (newIdx < 0 || newIdx >= arr.length) return
-      const tmp = arr[idx]
-      arr[idx] = arr[newIdx]
-      arr[newIdx] = tmp
+    moveSection(idx, dir, list) {
+      const target = idx + dir
+      if (target < 0 || target >= list.length) return
+      const temp = list[idx]
+      list[idx] = list[target]
+      list[target] = temp
       renumberSections(this.sections)
       this.$emit('update-sections', this.sections)
     },
-    removeSection(idx, arr) {
-      arr.splice(idx, 1)
+    removeSection(idx, list) {
+      list.splice(idx, 1)
       renumberSections(this.sections)
       this.$emit('update-sections', this.sections)
     },
-    editPrompt(sec) {
-      this.editingPromptSection = sec
+    editPrompt(section) {
+      this.editingPromptSection = section
     },
-    // ===== 滚动控制 =====
+
+    // ===== 滚动 =====
     scrollTemplates(dir) {
       const el = this.$refs.templateGridRef
-      if (!el) return
-      el.scrollBy({ left: dir * 160, behavior: 'smooth' })
+      if (el) el.scrollBy({ left: dir * 120, behavior: 'smooth' })
     },
     onTemplateScroll() {
       this.checkScrollState()
@@ -324,40 +383,42 @@ export default {
       const el = this.$refs.templateGridRef
       if (!el) return
       this.canScrollLeft = el.scrollLeft > 4
-      this.canScrollRight = el.scrollLeft < el.scrollWidth - el.clientWidth - 4
+      this.canScrollRight = el.scrollLeft + el.clientWidth < el.scrollWidth - 4
     },
   },
 }
 </script>
 
 <style scoped>
-/* 水平滚动容器 */
+/* === 模板卡片区域 === */
 .template-scroll-wrap {
   position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0;
 }
+.template-grid {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding: 2px 0;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.template-grid::-webkit-scrollbar { display: none; }
 .template-scroll-btn {
   position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
   z-index: 2;
+  border: 1px solid var(--border-primary);
+  background: var(--bg-primary);
+  border-radius: 50%;
   width: 22px;
   height: 22px;
-  border-radius: 50%;
-  border: 1px solid var(--border-primary);
-  background: var(--bg-elevated, var(--bg-primary));
-  color: var(--text-secondary);
-  cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-  transition: all 0.15s;
-}
-.template-scroll-btn:hover {
-  background: var(--bg-secondary);
-  color: var(--primary-400);
-  border-color: var(--primary-400);
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  color: var(--text-secondary);
 }
 .template-scroll-left { left: -4px; }
 .template-scroll-right { right: -4px; }
@@ -366,32 +427,18 @@ export default {
   font-size: 10px;
   color: var(--text-muted);
   margin-top: 4px;
-  opacity: 0.7;
-}
-.template-grid {
-  display: flex;
-  gap: 6px;
-  overflow-x: auto;
-  scroll-snap-type: x proximity;
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-  padding: 2px 0;
-  flex: 1;
-}
-.template-grid::-webkit-scrollbar {
-  display: none;
 }
 .template-card {
-  position: relative;
-  flex: 0 0 auto;
-  width: 120px;
-  padding: 6px 8px;
+  min-width: 110px;
+  width: 110px;
+  padding: 8px;
   border: 1px solid var(--border-primary);
   border-radius: 6px;
   cursor: pointer;
   transition: all 0.15s;
   background: var(--bg-primary);
   scroll-snap-align: start;
+  position: relative;
 }
 .template-card:hover {
   border-color: var(--primary-400);
@@ -453,62 +500,101 @@ export default {
 .template-card:hover .template-delete-btn {
   opacity: 1;
 }
-.template-editor {
+
+/* === 章节树（合并了章节控制+编辑） === */
+.ts-chapter-tree {
   margin-top: 8px;
   border-top: 1px solid var(--border-primary);
   padding-top: 8px;
 }
-.template-editor-tree {
-  max-height: 300px;
-  overflow-y: auto;
-}
-.te-section {
-  margin-bottom: 4px;
-}
-.te-section-header {
+.ts-tree-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 0;
+  justify-content: space-between;
+  margin-bottom: 4px;
 }
-.te-children {
-  padding-left: 16px;
+.ts-tree-body {
+  max-height: 320px;
+  overflow-y: auto;
 }
-.te-child-row {
+.ts-sec {
+  margin-bottom: 1px;
+}
+.ts-sec-row,
+.ts-child-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 0;
+  min-height: 24px;
+}
+.ts-checkbox-label {
   display: flex;
   align-items: center;
   gap: 3px;
-  padding: 2px 0;
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+  font-size: 13px;
 }
-.te-number {
+.ts-checkbox-label input[type="checkbox"] {
+  margin: 0;
+  flex-shrink: 0;
+}
+.ts-sec-number {
   font-size: 11px;
   color: var(--text-muted);
-  min-width: 24px;
+  min-width: 20px;
+  flex-shrink: 0;
 }
-.te-title-input {
+.ts-sec-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+.ts-sec-row .ts-sec-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.ts-sec-badges {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.ts-sec-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.ts-children {
+  padding-left: 18px;
+}
+.ts-title-input {
   flex: 1;
   font-size: 12px;
-  border: 1px solid transparent;
+  border: 1px solid var(--border-primary);
   border-radius: 3px;
-  padding: 2px 4px;
-  background: transparent;
+  padding: 1px 4px;
+  background: var(--bg-primary);
   color: var(--text-primary);
   min-width: 0;
-}
-.te-title-input:hover, .te-title-input:focus {
-  border-color: var(--border-primary);
-  background: var(--bg-primary);
   outline: none;
 }
-.te-type-select {
+.ts-title-input:focus {
+  border-color: var(--primary-400);
+}
+.ts-type-select {
   font-size: 10px;
   border: 1px solid var(--border-primary);
   border-radius: 3px;
   padding: 1px 2px;
   background: var(--bg-primary);
   color: var(--text-secondary);
-  min-width: 42px;
+  min-width: 38px;
 }
+
+/* === 编辑模式小按钮 === */
 .te-btn {
   font-size: 10px;
   background: var(--bg-secondary);
@@ -530,42 +616,111 @@ export default {
   background: var(--danger-50, #fef2f2);
   color: var(--danger-600, #dc2626);
 }
-.prompt-editor-overlay {
+
+/* === Prompt 编辑弹窗（优化版） === */
+.prompt-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.4);
-  z-index: 1000;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 9999;
   display: flex;
   align-items: center;
   justify-content: center;
+  backdrop-filter: blur(3px);
 }
-.prompt-editor-dialog {
-  background: var(--bg-primary);
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+.prompt-dialog {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-primary);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(255,255,255,0.06);
   width: 90%;
-  max-width: 500px;
+  max-width: 520px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
-.prompt-editor-header {
+.prompt-dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  padding: 14px 16px;
   border-bottom: 1px solid var(--border-primary);
-  font-size: 13px;
-  font-weight: 600;
+  background: var(--bg-tertiary);
 }
-.prompt-editor-textarea {
-  width: 100%;
-  font-size: 12px;
-  line-height: 1.5;
-  padding: 12px;
+.prompt-dialog-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.prompt-dialog-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--primary-600, #4f46e5);
+  background: var(--primary-50, #eef2ff);
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.prompt-dialog-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
   border: none;
+  background: var(--bg-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.15s;
+}
+.prompt-dialog-close:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+.prompt-dialog-body {
+  flex: 1;
+  padding: 16px;
+  overflow: hidden;
+}
+.prompt-dialog-textarea {
+  width: 100%;
+  min-height: 240px;
+  font-size: 13px;
+  line-height: 1.6;
+  padding: 12px;
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
   background: var(--bg-primary);
   color: var(--text-primary);
   resize: vertical;
   outline: none;
-  font-family: 'Consolas', monospace;
+  font-family: 'Consolas', 'Monaco', monospace;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+.prompt-dialog-textarea:focus {
+  border-color: var(--primary-400, #818cf8);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+.prompt-dialog-textarea::placeholder {
+  color: var(--text-muted);
+}
+.prompt-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-primary);
+  background: var(--bg-tertiary);
+}
+.prompt-dialog-hint {
+  font-size: 11px;
+  color: var(--text-muted);
 }
 </style>

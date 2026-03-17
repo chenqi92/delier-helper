@@ -22,6 +22,7 @@
           <span v-else class="srv-status-badge idle">未连接</span>
           <span v-if="srv.serverData" class="srv-summary">
             {{ srv.serverData.hostname }} · {{ Object.values(srv.serverData.softwareVersions || {}).filter(v => v && !v.includes('not installed')).length }} 个软件
+            <template v-if="srv.serverData.appFiles && srv.serverData.appFiles.trim()"> · {{ srv.serverData.appFiles.trim().split('\n').length }} 个应用</template>
           </span>
         </div>
 

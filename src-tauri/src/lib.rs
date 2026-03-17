@@ -29,7 +29,6 @@ pub fn run() {
             commands::llm_request,
             commands::llm_get_request,
             ssh_connector::ssh_test_connection,
-            ssh_connector::ssh_exec_command,
             ssh_connector::ssh_read_server_info,
         ])
         .setup(|app| {

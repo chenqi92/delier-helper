@@ -42,6 +42,9 @@
         <button class="btn btn-primary btn-sm" @click="exportWord" :disabled="!scanResult" data-guide="srs-export">
           <FileDown :size="14" /> 导出 Word
         </button>
+        <button class="btn btn-secondary btn-sm" @click="exportMarkdown" :disabled="!scanResult">
+          <FileDown :size="14" /> 导出 MD
+        </button>
       </div>
     </div>
 
@@ -118,32 +121,6 @@
           </div>
         </div>
 
-        <!-- 章节控制 -->
-        <div class="card" data-guide="srs-chapters">
-          <div class="card-header">
-            <h3><Settings :size="14" /> 章节控制</h3>
-            <div style="display:flex;gap:4px;">
-              <span class="select-action" @click="toggleAllSections(true)">全选</span>
-              <span class="select-action" @click="toggleAllSections(false)">全不选</span>
-            </div>
-          </div>
-          <div class="card-body" style="max-height:300px;overflow-y:auto;">
-            <div v-for="sec in sections" :key="sec.id">
-              <label class="checkbox-label section-tree-item" :style="{ paddingLeft: '0px', fontWeight: 'bold' }">
-                <input type="checkbox" v-model="sec.enabled" @change="toggleChildSections(sec, sec.enabled)" />
-                <span>{{ sec.number }} {{ sec.title }}</span>
-              </label>
-              <div v-if="sec.children && sec.children.length > 0" style="padding-left:16px;">
-                <label v-for="child in sec.children" :key="child.id" class="checkbox-label section-tree-item">
-                  <input type="checkbox" v-model="child.enabled" />
-                  <span style="font-size:12px;">{{ child.number }} {{ child.title }}</span>
-                  <span v-if="child.type === 'diagram'" class="badge badge-info" style="font-size:10px;margin-left:4px;">图</span>
-                  <span v-if="child.type === 'table'" class="badge badge-warning" style="font-size:10px;margin-left:4px;">表</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </div>
       </aside>
 
       <!-- 右侧预览/编辑区 -->
@@ -205,11 +182,12 @@
 
 <script>
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { writeFile } from '@tauri-apps/plugin-fs'
+import { writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { FolderOpen, Search, X, Check, FileDown, FileText, Settings, ChevronRight, Bot } from 'lucide-vue-next'
 import { createSrsTemplate, getEnabledLeafSections, countSections, findSectionById, renumberSections } from '../core/doc-template/srs-template.js'
 import { scanCodebase, buildContextSummary } from '../core/doc-template/codebase-scanner.js'
 import { renderDocSections } from '../core/doc-template/doc-docx-renderer.js'
+import { renderSectionsToMarkdown } from '../core/doc-template/ops-md-renderer.js'
 import { fillDocSections, buildDocSectionPrompt, applyDocSectionResult, createAiController } from '../core/doc-template/doc-llm-service.js'
 import { loadProviderConfigs, loadActiveSelection, getResolvedConfig, callLlm } from '../core/llm/llm-service.js'
 import { saveRecentProject, getRecentProjects, savePageConfig, loadPageConfig, getSetting, setSetting } from '../core/db.js'
@@ -515,6 +493,22 @@ export default {
         const buffer = await renderDocSections(this.sections, this.docInfo)
         await writeFile(path, buffer)
         this.showToast('Word 文档已导出', 'success')
+      } catch (e) {
+        this.showToast('导出失败: ' + String(e), 'error')
+      }
+    },
+
+    async exportMarkdown() {
+      const path = await save({
+        title: '导出 Markdown 文件',
+        defaultPath: `${this.docInfo.projectName || '系统'}需求规格说明书.md`,
+        filters: [{ name: 'Markdown 文件', extensions: ['md'] }],
+      })
+      if (!path) return
+      try {
+        const md = renderSectionsToMarkdown(this.sections, this.docInfo)
+        await writeTextFile(path, md)
+        this.showToast('Markdown 文件已导出', 'success')
       } catch (e) {
         this.showToast('导出失败: ' + String(e), 'error')
       }

@@ -75,20 +75,9 @@ pub async fn ssh_test_connection(
     .map_err(|e| format!("任务执行失败: {}", e))?
 }
 
-#[tauri::command]
-pub async fn ssh_exec_command(
-    host: String,
-    port: u16,
-    username: String,
-    password: String,
-    command: String,
-) -> Result<String, String> {
-    tokio::task::spawn_blocking(move || {
-        ssh_exec(&host, port, &username, &password, &command)
-    })
-    .await
-    .map_err(|e| format!("任务执行失败: {}", e))?
-}
+// 注意：不暴露通用的 ssh_exec_command 命令到前端
+// 仅提供 ssh_test_connection（只执行 echo OK）和 ssh_read_server_info（只执行只读命令）
+// 确保不会对服务器产生任何写操作或副作用
 
 #[tauri::command]
 pub async fn ssh_read_server_info(
@@ -113,16 +102,35 @@ pub async fn ssh_read_server_info(
         let disk_info = ssh_exec_safe(h, port, u, p, "df -h 2>/dev/null");
         let uptime = ssh_exec_safe(h, port, u, p, "uptime").trim().to_string();
 
+        // 网络接口（区分内网/外网 IP）
+        let network_interfaces = ssh_exec_safe(h, port, u, p, "ip addr show 2>/dev/null || ifconfig 2>/dev/null");
+
+        // LVM 磁盘布局（扩容说明用）
+        let lvm_info = ssh_exec_safe(h, port, u, p, "echo '=== LV ===' && lvs --noheadings 2>/dev/null; echo '=== VG ===' && vgs --noheadings 2>/dev/null; echo '=== PV ===' && pvs --noheadings 2>/dev/null");
+
         // 运行中的 systemd 服务
         let systemd_services = ssh_exec_safe(
             h, port, u, p,
             "systemctl list-units --type=service --state=running --no-pager --no-legend 2>/dev/null | head -50",
         );
 
+        // systemd 自定义服务配置详情（获取 ExecStart、WorkingDirectory 等）
+        // 只读取非系统级的自定义服务，通过检查 /etc/systemd/system/ 下的 .service 文件
+        let systemd_service_configs = ssh_exec_safe(
+            h, port, u, p,
+            "for f in /etc/systemd/system/*.service; do [ -f \"$f\" ] && echo \"=== $(basename $f) ===\" && cat \"$f\" 2>/dev/null; done | head -300",
+        );
+
         // Docker 容器
         let docker_containers = ssh_exec_safe(
             h, port, u, p,
             "docker ps --format '{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}' 2>/dev/null",
+        );
+
+        // docker-compose 配置（如果存在）
+        let docker_compose_configs = ssh_exec_safe(
+            h, port, u, p,
+            "for d in /data /opt /srv /home; do find \"$d\" -maxdepth 3 -name 'docker-compose.yml' -o -name 'docker-compose.yaml' 2>/dev/null; done | head -10",
         );
 
         // 监听端口
@@ -140,13 +148,46 @@ pub async fn ssh_read_server_info(
         let python_version = ssh_exec_safe(h, port, u, p, "python3 --version 2>/dev/null || python --version 2>/dev/null || echo 'not installed'").trim().to_string();
         let docker_version = ssh_exec_safe(h, port, u, p, "docker --version 2>/dev/null || echo 'not installed'").trim().to_string();
 
-        // Nginx 配置
-        let nginx_config = ssh_exec_safe(h, port, u, p, "nginx -T 2>/dev/null | head -200");
+        // 已安装软件的实际路径（用于确定安装目录）
+        let software_paths = ssh_exec_safe(
+            h, port, u, p,
+            "for cmd in nginx java mysql mysqld redis-server redis-cli node python3 docker emqx nacos minio; do p=$(which $cmd 2>/dev/null); [ -n \"$p\" ] && echo \"$cmd: $p\"; done",
+        );
 
-        // 目录结构（常见部署路径）
+        // 查找 JAR/WAR 文件（定位微服务部署路径）
+        let app_files = ssh_exec_safe(
+            h, port, u, p,
+            "find /data /opt /srv /home -maxdepth 4 \\( -name '*.jar' -o -name '*.war' \\) -type f 2>/dev/null | head -30",
+        );
+
+        // 查找 deploy/启动脚本
+        let deploy_scripts = ssh_exec_safe(
+            h, port, u, p,
+            "find /data /opt /srv /home -maxdepth 4 \\( -name 'deploy*.sh' -o -name 'start*.sh' -o -name 'stop*.sh' -o -name 'restart*.sh' -o -name '*.service' \\) -type f 2>/dev/null | head -20",
+        );
+
+        // 关键进程运行参数（识别 Java 服务的启动参数、端口等）
+        let java_processes = ssh_exec_safe(
+            h, port, u, p,
+            "ps aux 2>/dev/null | grep -E 'java|node|python|nginx|redis|mysql|docker|minio|nacos|emqx' | grep -v grep | head -30",
+        );
+
+        // Nginx 配置
+        let nginx_config = ssh_exec_safe(h, port, u, p, "nginx -T 2>/dev/null | head -300");
+
+        // 定时任务
+        let crontab_info = ssh_exec_safe(h, port, u, p, "crontab -l 2>/dev/null; echo '=== /etc/crontab ===' && cat /etc/crontab 2>/dev/null | grep -v '^#' | grep -v '^$'");
+
+        // 防火墙规则
+        let firewall_rules = ssh_exec_safe(
+            h, port, u, p,
+            "firewall-cmd --list-all 2>/dev/null || iptables -L -n 2>/dev/null | head -40 || echo 'no firewall detected'",
+        );
+
+        // 目录结构（常见部署路径，含子目录深度扫描）
         let dir_structure = ssh_exec_safe(
             h, port, u, p,
-            "for d in /data /opt /srv /home /var/www; do [ -d \"$d\" ] && echo \"=== $d ===\" && ls -la $d 2>/dev/null | head -20; done",
+            "for d in /data /opt /srv /home /var/www /usr/local; do [ -d \"$d\" ] && echo \"=== $d ===\" && find \"$d\" -maxdepth 2 -type d 2>/dev/null | head -30; done",
         );
 
         Ok(serde_json::json!({
@@ -158,8 +199,12 @@ pub async fn ssh_read_server_info(
             "memoryInfo": memory_info,
             "diskInfo": disk_info,
             "uptime": uptime,
+            "networkInterfaces": network_interfaces,
+            "lvmInfo": lvm_info,
             "systemdServices": systemd_services,
+            "systemdServiceConfigs": systemd_service_configs,
             "dockerContainers": docker_containers,
+            "dockerComposeConfigs": docker_compose_configs,
             "listeningPorts": listening_ports,
             "softwareVersions": {
                 "nginx": nginx_version,
@@ -170,7 +215,13 @@ pub async fn ssh_read_server_info(
                 "python": python_version,
                 "docker": docker_version,
             },
+            "softwarePaths": software_paths,
+            "appFiles": app_files,
+            "deployScripts": deploy_scripts,
+            "javaProcesses": java_processes,
             "nginxConfig": nginx_config,
+            "crontabInfo": crontab_info,
+            "firewallRules": firewall_rules,
             "dirStructure": dir_structure,
         }))
     })

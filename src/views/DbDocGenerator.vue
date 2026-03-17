@@ -47,11 +47,11 @@
             <Link :size="12" /> 实体图
           </button>
         </div>
-        <button v-if="viewMode === 'table'" class="btn btn-primary btn-sm" @click="exportMarkdown" :disabled="!schema">
-          <FileText :size="14" /> 导出 Markdown
-        </button>
         <button v-if="viewMode === 'table'" class="btn btn-primary btn-sm" @click="exportWord" :disabled="!schema">
           <FileDown :size="14" /> 导出 Word
+        </button>
+        <button v-if="viewMode === 'table'" class="btn btn-secondary btn-sm" @click="exportMarkdown" :disabled="!schema">
+          <FileDown :size="14" /> 导出 MD
         </button>
         <button v-if="viewMode === 'er'" class="btn btn-primary btn-sm" @click="openExportDialog('er')" :disabled="!schema">
           <Download :size="14" /> 导出 SVG
