@@ -60,9 +60,13 @@
             <h3><FileSpreadsheet :size="14" /> Excel 测试记录导入</h3>
           </div>
           <div class="card-body">
-            <button class="btn btn-primary btn-sm" style="width:100%;" @click="importExcel">
-              <Upload :size="14" /> 导入 Excel 测试记录
+            <button class="btn btn-primary btn-sm" style="width:100%;" @click="importExcel" :disabled="excelLoading">
+              <Upload :size="14" /> {{ excelLoading ? '正在解析 Excel...' : '导入 Excel 测试记录' }}
             </button>
+            <div v-if="excelLoading" class="tip" style="margin-top:8px;">
+              <span class="spinner-sm"></span>
+              <span>正在解析 Excel 文件并提取数据，请稍候...</span>
+            </div>
             <div v-if="excelData" style="margin-top:8px;">
               <div class="tip">
                 <Lightbulb :size="14" class="tip-icon" />
@@ -224,6 +228,7 @@ export default {
       selectedModelId: null,
       referenceFiles: [],
       excelData: null,
+      excelLoading: false,
       showImageGallery: false,
       previewImage: null,
       guideFinished: false,
@@ -289,11 +294,13 @@ export default {
   methods: {
     // ===== Excel 导入 =====
     async importExcel() {
+      if (this.excelLoading) return
       const filePath = await open({
         title: '选择 Excel 测试记录文件',
         filters: [{ name: 'Excel 文件', extensions: ['xlsx', 'xls'] }],
       })
       if (!filePath) return
+      this.excelLoading = true
       try {
         const fileBytes = await readFile(filePath)
         this.excelData = await parseTestExcel(fileBytes)
@@ -306,10 +313,12 @@ export default {
         // 动态注入测试记录到模板章节
         this.sections = injectExcelSections(this.sections, this.excelData, 'testrecord')
         this.expandedSections = new Set(this.sections.map(s => s.id))
-        this.showToast(`成功导入 ${stats.totalRows} 条测试记录，已注入到模板章节`, 'success')
-        this.addLog(`[Excel] 导入 ${this.excelData.sheets.length} 个工作表，共 ${stats.totalRows} 行，已注入为独立子章节`)
+        this.showToast(`成功导入 ${stats.totalRows} 条测试记录，已按模块注入到章节`, 'success')
+        this.addLog(`[Excel] 导入 ${this.excelData.sheets.length} 个工作表，共 ${stats.totalRows} 行，已智能分组注入`)
       } catch (e) {
         this.showToast('Excel 导入失败: ' + String(e), 'error')
+      } finally {
+        this.excelLoading = false
       }
     },
 
