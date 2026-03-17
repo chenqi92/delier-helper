@@ -30,6 +30,15 @@
       >
         <ImageIcon :size="12" /> 上传图片
       </button>
+      <!-- 表格类型提供"编辑源码"按钮 -->
+      <button
+        v-if="hasTable && !editing"
+        class="btn btn-secondary btn-sm"
+        @click="startEdit"
+        title="编辑 Markdown 源码"
+      >
+        <Edit3 :size="12" /> 编辑源码
+      </button>
       <input
         ref="imageInput"
         type="file"
@@ -66,7 +75,7 @@
         <span>点击编辑 Mermaid 代码，或使用 AI 生成</span>
       </div>
 
-      <!-- Mermaid 渲染错误 — 醒目的错误条 + 重试/编辑按钮 -->
+      <!-- Mermaid 渲染错误 -->
       <div v-if="mermaidError" class="mermaid-error-block">
         <div class="mermaid-error-header">
           <span class="section-error-icon">⚠</span>
@@ -126,9 +135,27 @@
       <div
         v-else
         class="content-preview"
-        @click="startEdit"
-        v-html="renderMarkdown(section.content)"
+        @click="handlePreviewClick"
+        v-html="renderedContentHtml"
       ></div>
+
+      <!-- 单元格编辑浮层 -->
+      <div v-if="cellEditing" class="cell-edit-overlay" @click.self="saveCellEdit">
+        <div class="cell-edit-popup" :style="cellEditStyle">
+          <textarea
+            ref="cellInput"
+            v-model="cellEditValue"
+            class="cell-edit-input"
+            @keydown.enter.exact.prevent="saveCellEdit"
+            @keydown.escape="cancelCellEdit"
+            rows="2"
+          ></textarea>
+          <div class="cell-edit-actions">
+            <button class="btn btn-primary btn-sm" @click="saveCellEdit">确认</button>
+            <button class="btn btn-secondary btn-sm" @click="cancelCellEdit">取消</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -160,7 +187,23 @@ export default {
       localMermaidCode: '',
       renderedSvg: '',
       mermaidError: '',
+      // 单元格编辑状态
+      cellEditing: false,
+      cellEditRow: -1,
+      cellEditCol: -1,
+      cellEditValue: '',
+      cellEditStyle: {},
     }
+  },
+  computed: {
+    /** 内容中是否包含 Markdown 表格 */
+    hasTable() {
+      return !!(this.section.content && /^\|.+\|$/m.test(this.section.content))
+    },
+    /** 渲染后的 HTML（携带单元格位置属性） */
+    renderedContentHtml() {
+      return this.renderMarkdown(this.section.content)
+    },
   },
   watch: {
     'section.content'(val) {
@@ -205,6 +248,149 @@ export default {
         this.renderMermaid(this.localMermaidCode)
       }
     },
+
+    // ===== 表格单元格编辑 =====
+
+    /**
+     * 处理预览区域的点击
+     * 如果点击的是 <td>/<th>，进入单元格编辑模式
+     * 否则进入整体文本编辑
+     */
+    handlePreviewClick(e) {
+      const cell = e.target.closest('td[data-row][data-col], th[data-row][data-col]')
+      if (cell) {
+        e.stopPropagation()
+        this.startCellEdit(cell)
+        return
+      }
+      // 非表格区域 → 整体编辑
+      this.startEdit()
+    },
+
+    /** 开始编辑某个单元格 */
+    startCellEdit(cell) {
+      const row = parseInt(cell.dataset.row)
+      const col = parseInt(cell.dataset.col)
+      if (isNaN(row) || isNaN(col)) return
+
+      // 从 markdown 源码中提取该单元格的值
+      const table = this._parseMarkdownTable()
+      if (!table || row >= table.length || col >= table[row].length) return
+
+      this.cellEditRow = row
+      this.cellEditCol = col
+      this.cellEditValue = table[row][col]
+
+      // 计算浮层位置（相对于点击的单元格）
+      const rect = cell.getBoundingClientRect()
+      const wrapper = this.$el.querySelector('.content-editor-wrapper')
+      const wrapperRect = wrapper?.getBoundingClientRect() || { left: 0, top: 0 }
+
+      this.cellEditStyle = {
+        position: 'absolute',
+        left: `${rect.left - wrapperRect.left}px`,
+        top: `${rect.top - wrapperRect.top + rect.height + 4}px`,
+        minWidth: `${Math.max(rect.width, 180)}px`,
+        maxWidth: '400px',
+      }
+
+      this.cellEditing = true
+      this.$nextTick(() => {
+        this.$refs.cellInput?.focus()
+        this.$refs.cellInput?.select()
+      })
+    },
+
+    /** 保存单元格编辑 → 更新 markdown 源码中对应位置 */
+    saveCellEdit() {
+      if (!this.cellEditing) return
+
+      const table = this._parseMarkdownTable()
+      if (!table || this.cellEditRow >= table.length || this.cellEditCol >= table[this.cellEditRow].length) {
+        this.cancelCellEdit()
+        return
+      }
+
+      // 更新该单元格
+      table[this.cellEditRow][this.cellEditCol] = this.cellEditValue.replace(/\|/g, '│').replace(/\n/g, ' ')
+
+      // 重建 markdown 表格并替换原内容中的表格部分
+      const newContent = this._rebuildContentWithTable(table)
+
+      this.cellEditing = false
+      this.cellEditRow = -1
+      this.cellEditCol = -1
+
+      this.$emit('update-content', {
+        sectionId: this.section.id,
+        content: newContent,
+      })
+    },
+
+    cancelCellEdit() {
+      this.cellEditing = false
+      this.cellEditRow = -1
+      this.cellEditCol = -1
+    },
+
+    /**
+     * 从 section.content 中解析 markdown 表格为二维数组
+     * 返回 [[header1, header2], [cell1, cell2], ...]
+     * row 0 = 表头
+     */
+    _parseMarkdownTable() {
+      const content = this.section.content || ''
+      const lines = content.split('\n')
+      const table = []
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+          // 跳过分隔行 |---|---|
+          if (/^\|[\s\-|:]+\|$/.test(trimmed)) continue
+          const cells = trimmed.split('|').slice(1, -1).map(c => c.trim())
+          table.push(cells)
+        }
+      }
+      return table.length > 0 ? table : null
+    },
+
+    /**
+     * 将修改后的二维数组重建为 markdown，替换原文中的表格
+     */
+    _rebuildContentWithTable(table) {
+      const content = this.section.content || ''
+      const lines = content.split('\n')
+      const result = []
+      let tableRowIdx = 0
+      let headerDone = false
+
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+          // 分隔行原样保留
+          if (/^\|[\s\-|:]+\|$/.test(trimmed)) {
+            result.push(trimmed)
+            continue
+          }
+          if (tableRowIdx < table.length) {
+            const row = table[tableRowIdx]
+            result.push('| ' + row.join(' | ') + ' |')
+            tableRowIdx++
+            // 表头后面如果没有分隔行，自动加一行
+            if (!headerDone) {
+              headerDone = true
+            }
+          }
+        } else {
+          result.push(line)
+        }
+      }
+      return result.join('\n')
+    },
+
+    // ===== Markdown 渲染 =====
+
     async renderMermaid(code) {
       if (!code) return
       this.mermaidError = ''
@@ -262,22 +448,30 @@ export default {
       let inTable = false
       let tableHtml = ''
       let isFirstRow = true
+      let rowIndex = 0
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim()
         if (line.startsWith('|') && line.endsWith('|')) {
-          if (/^\|[\s-|:]+\|$/.test(line)) continue
+          if (/^[\s\-|:]+$/.test(line.replace(/\|/g, ''))) continue
           if (!inTable) {
             inTable = true
             isFirstRow = true
-            tableHtml = '<table class="detail-table" style="width:100%;margin:8px 0;"><thead>'
+            rowIndex = 0
+            tableHtml = '<table class="detail-table editable-table" style="width:100%;margin:8px 0;"><thead>'
           }
           const cells = line.split('|').filter(c => c !== '').map(c => c.trim())
           if (isFirstRow) {
-            tableHtml += '<tr>' + cells.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>'
+            tableHtml += '<tr>' + cells.map((c, ci) =>
+              `<th data-row="${rowIndex}" data-col="${ci}" title="点击编辑">${c}</th>`
+            ).join('') + '</tr></thead><tbody>'
             isFirstRow = false
+            rowIndex++
           } else {
-            tableHtml += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>'
+            tableHtml += '<tr>' + cells.map((c, ci) =>
+              `<td data-row="${rowIndex}" data-col="${ci}" title="点击编辑">${c}</td>`
+            ).join('') + '</tr>'
+            rowIndex++
           }
         } else {
           if (inTable) {
@@ -482,6 +676,7 @@ export default {
 }
 .content-editor-wrapper {
   min-height: 40px;
+  position: relative;
 }
 .content-empty {
   padding: 12px;
@@ -519,5 +714,58 @@ export default {
 .content-preview:hover {
   border-color: var(--border-primary);
   background: var(--bg-secondary);
+}
+
+/* === 可编辑表格单元格交互 === */
+.content-preview :deep(.editable-table td),
+.content-preview :deep(.editable-table th) {
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.content-preview :deep(.editable-table td:hover),
+.content-preview :deep(.editable-table th:hover) {
+  background: var(--primary-500, #6366f1) !important;
+  background: rgba(99, 102, 241, 0.1) !important;
+  box-shadow: inset 0 0 0 1px var(--primary-400, #818cf8);
+}
+
+/* 单元格编辑浮层 */
+.cell-edit-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 100;
+}
+.cell-edit-popup {
+  z-index: 101;
+  background: #1e293b;
+  border: 1px solid #818cf8;
+  border-radius: 8px;
+  padding: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.cell-edit-input {
+  width: 100%;
+  font-size: 13px;
+  line-height: 1.5;
+  border: 1px solid #475569;
+  border-radius: 4px;
+  padding: 6px 8px;
+  background: #0f172a;
+  color: #f1f5f9;
+  resize: vertical;
+  outline: none;
+  font-family: inherit;
+}
+.cell-edit-input:focus {
+  border-color: #818cf8;
+}
+.cell-edit-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  justify-content: flex-end;
 }
 </style>

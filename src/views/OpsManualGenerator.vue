@@ -396,6 +396,10 @@ export default {
 
     // ===== 模板和参考文件 =====
     onSwitchTemplate(newSections) {
+      if (this.aiProcessing) {
+        this.showToast('AI 正在生成中，请先停止生成再切换模板', 'warning')
+        return
+      }
       this.sections = newSections
       this.expandedSections = new Set(newSections.map(s => s.id))
     },
