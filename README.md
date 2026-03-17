@@ -1,6 +1,6 @@
 # 交付助手 (Deliver Helper)
 
-> 一站式软件项目交付文档生成工具 — 软著代码、接口文档、数据库文档、需求文档、设计文档，一键搞定
+> 一站式软件项目交付文档生成工具 — 软著代码、接口文档、数据库文档、需求文档、设计文档、运维手册，一键搞定
 
 基于 **Tauri 2 + Vue 3** 构建的跨平台桌面应用，支持 **Windows / macOS**。集成 AI 大模型辅助能力，让文档生成更智能、更高效。
 
@@ -58,6 +58,17 @@
 - 与 SRS 共享同一套模板与编辑体系
 - 内置系统设计文档专用模板
 - AI 辅助生成架构设计、模块设计、接口设计等内容
+
+### 🖥️ 服务器运维手册
+
+基于 SSH 连接和 AI 辅助，自动生成专业的服务器运维手册。
+
+- **SSH 服务器扫描** — 连接 Linux 服务器，自动读取 OS 信息、运行服务、监听端口、软件版本、Nginx 配置等
+- **多服务器支持** — 支持添加多台服务器（业务服务器、存储服务器等），批量扫描
+- **模板系统** — 内置标准版（9大章节）和精简版运维手册模板，支持从 Word/MD 导入自定义模板
+- **可交互表格** — 表格类型章节支持增删行列、单元格编辑，Markdown 双向同步
+- **AI 智能填充** — 结合代码结构和服务器扫描信息，AI 逐章节生成运维内容
+- **双格式导出** — 支持导出 Word (.docx) 和 Markdown (.md)
 
 ### 🤖 AI 大模型集成
 
@@ -145,12 +156,15 @@ deliver-helper/
 │   │   ├── DbDocGenerator.vue        # 数据库文档生成
 │   │   ├── SrsGenerator.vue          # 需求规格说明书
 │   │   ├── SddGenerator.vue          # 系统设计说明书
+│   │   ├── OpsManualGenerator.vue    # 服务器运维手册
 │   │   └── AiSettings.vue            # AI 模型配置
 │   ├── components/               # 共享组件
 │   │   ├── AiSidebar.vue             # AI 对话侧边栏
 │   │   ├── GuideTour.vue             # 新手引导
 │   │   ├── ReferenceFiles.vue        # 参考文件上传
 │   │   ├── SectionEditor.vue         # 章节编辑器
+│   │   ├── TableEditor.vue           # 可交互表格编辑器
+│   │   ├── ServerConnector.vue       # 服务器 SSH 连接管理
 │   │   └── TemplateSelector.vue      # 模板选择器
 │   ├── core/                     # 核心逻辑
 │   │   ├── docx-generator.js         # Word 文档生成 (docx 库)
@@ -179,7 +193,10 @@ deliver-helper/
 │   │       ├── codebase-scanner.js       # 代码库扫描
 │   │       ├── file-parser.js            # 文件解析
 │   │       ├── srs-template.js           # SRS 模板定义
-│   │       └── sdd-template.js           # SDD 模板定义
+│   │       ├── sdd-template.js           # SDD 模板定义
+│   │       ├── ops-template.js           # 运维手册模板定义
+│   │       ├── ops-llm-service.js        # 运维手册 AI 服务
+│   │       └── ops-md-renderer.js        # 运维手册 Markdown 导出
 │   └── styles/
 │       └── index.css              # 全局样式（深色/浅色主题）
 ├── src-tauri/                     # Rust 后端
@@ -188,7 +205,8 @@ deliver-helper/
 │   │   ├── lib.rs                 # Tauri 插件注册
 │   │   ├── commands.rs            # Tauri 命令（文件扫描、LLM 请求）
 │   │   ├── scanner.rs             # 文件扫描引擎（递归、忽略规则、编码处理）
-│   │   └── db_connector.rs        # 数据库连接器（MySQL / PostgreSQL）
+│   │   ├── db_connector.rs        # 数据库连接器（MySQL / PostgreSQL）
+│   │   └── ssh_connector.rs       # SSH 连接器（服务器扫描）
 │   ├── tauri.conf.json            # Tauri 应用配置
 │   └── Cargo.toml                 # Rust 依赖管理
 ├── scripts/                       # 工具脚本
@@ -287,6 +305,7 @@ pnpm release:major
 | Markdown | marked / mermaid | AI 回复渲染 |
 | 后端语言 | Rust | 高性能后端逻辑 |
 | 数据库驱动 | sqlx (MySQL / PostgreSQL) | 数据库连接与查询 |
+| SSH | ssh2 | 服务器远程连接与命令执行 |
 | HTTP 客户端 | reqwest | LLM API 请求 |
 | 持久化 | tauri-plugin-store | 本地配置存储 |
 
