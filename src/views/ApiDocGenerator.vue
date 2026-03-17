@@ -59,7 +59,7 @@
           <div class="card-body">
             <div v-if="!projectDir" class="tip">
               <Lightbulb :size="14" class="tip-icon" />
-              <span>选择 Spring Boot 项目的根目录。</span>
+              <span>选择项目根目录（支持 Java / Go / Python / Rust）</span>
             </div>
             <div v-else class="dir-item">
               <div class="dir-item-header">
@@ -462,7 +462,7 @@ export default {
       isActive: true,
       recentProjects: [],
       guideSteps: [
-        { target: 'api-select-dir', text: '选择 Spring Boot 项目的根目录', doneWhen: 'hasProject' },
+        { target: 'api-select-dir', text: '选择项目根目录（支持 Java / Go / Python / Rust）', doneWhen: 'hasProject' },
         { target: 'api-start-parse', text: '点击开始解析接口文档', doneWhen: 'hasParsed' },
       ],
     }

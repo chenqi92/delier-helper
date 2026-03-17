@@ -258,6 +258,9 @@
                 <label class="checkbox-label" style="font-size:11px;margin:0;">
                   <input type="checkbox" v-model="erShowComments" /> 显示备注
                 </label>
+                <span v-if="filteredTables.length > 30" style="font-size:11px;color:var(--warning-500);">
+                  ⚠ {{ filteredTables.length }} 张表，渲染可能较慢
+                </span>
               </div>
               <div style="display:flex;align-items:center;gap:8px;">
                 <span style="font-size:11px;color:var(--text-muted);">{{ Math.round(diagramScale * 100) }}%</span>
@@ -266,14 +269,30 @@
                 <button class="btn-icon" @click="zoomReset" title="重置"><span style="font-size:12px;">1:1</span></button>
               </div>
             </div>
-            <div class="er-diagram-body"
+            <!-- 大表数量未确认时显示提示 -->
+            <div v-if="erNeedsConfirm" class="er-diagram-body" style="position:relative;">
+              <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:40px;text-align:center;">
+                <span style="font-size:36px;">⚠️</span>
+                <span style="font-size:14px;font-weight:600;color:var(--text-primary);">{{ filteredTables.length }} 张表，渲染 ER 图可能需要较长时间</span>
+                <span style="font-size:12px;color:var(--text-muted);">建议先在左侧筛选减少表数量（推荐 ≤ 30 张），或点击下方按钮强制渲染</span>
+                <button class="btn btn-primary btn-sm" @click="confirmErRender">
+                  继续渲染 {{ filteredTables.length }} 张表
+                </button>
+              </div>
+            </div>
+            <div v-else class="er-diagram-body"
                  ref="erContainer"
                  @wheel.prevent="onDiagramWheel"
                  @mousedown="onDiagramMouseDown"
                  @mousemove="onDiagramMouseMove"
                  @mouseup="onDiagramMouseUp"
                  @mouseleave="onDiagramMouseUp"
+                 style="position:relative;"
             >
+              <div v-if="diagramLoading" class="diagram-loading-overlay">
+                <span class="spinner" style="width:24px;height:24px;"></span>
+                <span style="font-size:13px;color:var(--text-secondary);margin-top:8px;">正在渲染关系图（{{ filteredTables.length }} 张表）...</span>
+              </div>
               <div class="er-diagram-inner" :style="diagramTransformStyle">
                 <div ref="erContent"></div>
               </div>
@@ -309,7 +328,12 @@
                  @mousemove="onDiagramMouseMove"
                  @mouseup="onDiagramMouseUp"
                  @mouseleave="onDiagramMouseUp"
+                 style="position:relative;"
             >
+              <div v-if="diagramLoading" class="diagram-loading-overlay">
+                <span class="spinner" style="width:24px;height:24px;"></span>
+                <span style="font-size:13px;color:var(--text-secondary);margin-top:8px;">正在渲染实体图...</span>
+              </div>
               <div class="er-diagram-inner" :style="diagramTransformStyle">
                 <div ref="entityContent"></div>
               </div>
@@ -508,6 +532,8 @@ export default {
       dragStartX: 0,
       dragStartY: 0,
       _renderCounter: 0,
+      diagramLoading: false,
+      erConfirmed: false,
       currentEntityTableIndex: 0,
       erShowComments: true,
       exportDialog: {
@@ -608,6 +634,9 @@ export default {
         hasSchema: !!this.schema,
       }
     },
+    erNeedsConfirm() {
+      return this.viewMode === 'er' && this.filteredTables.length > 30 && !this.erConfirmed
+    },
   },
   watch: {
     'guide.enabled'(val) { if (val) this.guideFinished = false },
@@ -616,7 +645,12 @@ export default {
       this.diagramScale = 1
       this.diagramX = 0
       this.diagramY = 0
+      this.erConfirmed = false
       if (val === 'er') {
+        if (this.filteredTables.length > 30) {
+          // 大量表时等用户确认
+          return
+        }
         this.$nextTick(() => this.renderErDiagram())
       } else if (val === 'relation') {
         this.currentEntityTableIndex = 0
@@ -624,7 +658,9 @@ export default {
       }
     },
     filteredTables() {
+      this.erConfirmed = false
       if (this.viewMode === 'er') {
+        if (this.filteredTables.length > 30) return
         this.$nextTick(() => this.renderErDiagram())
       } else if (this.viewMode === 'relation') {
         this.currentEntityTableIndex = 0
@@ -834,6 +870,11 @@ export default {
       }
     },
 
+    confirmErRender() {
+      this.erConfirmed = true
+      this.$nextTick(() => this.renderErDiagram())
+    },
+
     // ===== ER 图渲染 (Mermaid) =====
     async renderErDiagram() {
       const content = this.$refs.erContent
@@ -844,6 +885,21 @@ export default {
         content.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text-muted);font-size:13px;">暂无外键关系，无法生成 ER 图。</div>'
         return
       }
+
+      // SVG 缓存命中：code 未变时直接恢复，跳过 Mermaid 计算
+      if (this._erSvgCache && this._erSvgCache.code === code) {
+        content.innerHTML = this._erSvgCache.svg
+        this.$nextTick(() => this.autoFitDiagram('erContainer', 'erContent'))
+        return
+      }
+
+      this.diagramLoading = true
+      this._renderVersion = (this._renderVersion || 0) + 1
+      const myVersion = this._renderVersion
+
+      // 双层异步：requestAnimationFrame 确保当前帧 UI 更新完毕，setTimeout 给浏览器额外喘息时间
+      await new Promise(r => requestAnimationFrame(() => setTimeout(r, 100)))
+      if (this._renderVersion !== myVersion) return // 被新的渲染请求取代
 
       try {
         const mermaid = (await import('mermaid')).default
@@ -856,16 +912,25 @@ export default {
         this._renderCounter++
         const id = `er-${this._renderCounter}`
         const { svg } = await mermaid.render(id, code)
+        if (this._renderVersion !== myVersion) return
+        // 缓存渲染结果
+        this._erSvgCache = { code, svg }
         content.innerHTML = svg
         this.$nextTick(() => this.autoFitDiagram('erContainer', 'erContent'))
       } catch (e) {
-        content.innerHTML = `<div style="padding:20px;color:var(--danger-500);font-size:12px;">ER 图渲染失败: ${String(e)}</div>`
+        if (this._renderVersion === myVersion) {
+          content.innerHTML = `<div style="padding:20px;color:var(--danger-500);font-size:12px;">ER 图渲染失败: ${String(e)}</div>`
+        }
         console.error('Mermaid render error:', e)
+      } finally {
+        if (this._renderVersion === myVersion) {
+          this.diagramLoading = false
+        }
       }
     },
 
     // ===== 单表实体关系图渲染 (SVG) =====
-    renderEntityDiagram() {
+    async renderEntityDiagram() {
       const content = this.$refs.entityContent
       if (!content) return
 
@@ -875,9 +940,16 @@ export default {
         return
       }
 
-      const svg = generateTableEntitySvg(table, this.filteredColumns, this.filteredForeignKeys)
-      content.innerHTML = svg
-      this.$nextTick(() => this.autoFitDiagram('entityContainer', 'entityContent'))
+      this.diagramLoading = true
+      await new Promise(r => setTimeout(r, 30))
+
+      try {
+        const svg = generateTableEntitySvg(table, this.filteredColumns, this.filteredForeignKeys)
+        content.innerHTML = svg
+        this.$nextTick(() => this.autoFitDiagram('entityContainer', 'entityContent'))
+      } finally {
+        this.diagramLoading = false
+      }
     },
 
     // ===== 翻页 =====

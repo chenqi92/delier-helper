@@ -195,6 +195,30 @@ function createDocFooter() {
 // ==================== 内容渲染 ====================
 
 /**
+ * 智能分割 Markdown 表格行，正确处理反引号内的 | 管道符
+ */
+function splitTableRow(line) {
+    const inner = line.replace(/^\|/, '').replace(/\|$/, '')
+    const cells = []
+    let current = ''
+    let inBacktick = false
+    for (let i = 0; i < inner.length; i++) {
+        const ch = inner[i]
+        if (ch === '`') {
+            inBacktick = !inBacktick
+            current += ch
+        } else if (ch === '|' && !inBacktick) {
+            cells.push(current.trim())
+            current = ''
+        } else {
+            current += ch
+        }
+    }
+    if (current.trim()) cells.push(current.trim())
+    return cells.filter(c => c !== '')
+}
+
+/**
  * 将 Markdown 文本解析为基础 docx 段落
  * 支持：标题(####)、加粗、列表、表格、代码块、普通段落
  */
@@ -241,13 +265,13 @@ function parseMarkdownToParagraphs(markdownText) {
                 continue
             }
             inTable = true
-            let cells = line.trim().split('|').filter(c => c.trim() !== '').map(c => c.trim())
-            // 列数修正：如果数据行列数超过表头列数，将多余列合并到最后一列
+            let cells = splitTableRow(line.trim())
+            // 列数修正兜底：如果数据行列数仍超过表头列数，将多余列合并
             if (tableRows.length > 0) {
                 const headerColCount = tableRows[0].length
                 if (cells.length > headerColCount) {
                     const merged = cells.slice(0, headerColCount - 1)
-                    merged.push(cells.slice(headerColCount - 1).join('、'))
+                    merged.push(cells.slice(headerColCount - 1).join(' '))
                     cells = merged
                 }
             }
