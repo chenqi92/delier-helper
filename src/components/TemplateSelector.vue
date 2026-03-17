@@ -196,7 +196,7 @@
 
 <script>
 import { Layout, Save, Edit, Trash2, X, ChevronLeft, ChevronRight, Upload } from 'lucide-vue-next'
-import { getSrsPresets, getSddPresets, getOpsPresets, instantiateTemplate, toTemplateSkeleton, createSectionNode } from '../core/doc-template/template-presets.js'
+import { getSrsPresets, getSddPresets, getOpsPresets, getTestCasePresets, getTestRecordPresets, instantiateTemplate, toTemplateSkeleton, createSectionNode } from '../core/doc-template/template-presets.js'
 import { loadCustomTemplates, saveCustomTemplate, deleteCustomTemplate } from '../core/doc-template/template-store.js'
 import { renumberSections } from '../core/doc-template/srs-template.js'
 import { generateTemplateFromFile } from '../core/doc-template/template-from-doc.js'
@@ -230,7 +230,12 @@ export default {
   },
   computed: {
     builtinPresets() {
-      return this.docType === 'srs' ? getSrsPresets() : this.docType === 'ops' ? getOpsPresets() : getSddPresets()
+      return this.docType === 'srs' ? getSrsPresets()
+        : this.docType === 'sdd' ? getSddPresets()
+        : this.docType === 'ops' ? getOpsPresets()
+        : this.docType === 'testcase' ? getTestCasePresets()
+        : this.docType === 'testrecord' ? getTestRecordPresets()
+        : getSrsPresets()
     },
     allPresets() {
       const builtins = this.builtinPresets.map(p => ({ ...p, isCustom: false }))

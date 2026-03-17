@@ -479,3 +479,175 @@ export function getSddPresets() {
 // ==================== OPS 预设（从独立文件重新导出） ====================
 
 export { getOpsPresets } from './ops-template.js'
+
+// ==================== 测试用例预设 ====================
+
+export function getTestCasePresets() {
+    return [
+        {
+            id: 'tc-standard',
+            name: 'GB/T 15532 标准版',
+            description: '参照国标的完整测试用例文档，涵盖功能、性能、安全、兼容性测试',
+            sections: [
+                {
+                    id: 'tc-1', number: '1', title: '引言', type: 'text', prompt: '',
+                    children: [
+                        { id: 'tc-1-1', number: '1.1', title: '编写目的', type: 'text', prompt: '请编写测试用例文档的编写目的。\n说明：本文档的目标、适用范围和预期读者。200-300字。', children: [] },
+                        { id: 'tc-1-2', number: '1.2', title: '测试范围', type: 'text', prompt: '请根据项目信息，描述本次测试覆盖的功能范围和模块。\n列出测试对象、测试类型和不在测试范围内的内容。200-400字。', children: [] },
+                        { id: 'tc-1-3', number: '1.3', title: '术语定义', type: 'table', prompt: '请列出测试相关的术语和缩略语。\nMarkdown 表格，列：术语、全称、说明。至少 8 条。', children: [] },
+                        { id: 'tc-1-4', number: '1.4', title: '参考资料', type: 'text', prompt: '请列出测试相关的参考资料，包括需求文档、设计文档、行业标准（GB/T 15532、GB/T 25000 等）。', children: [] },
+                    ],
+                },
+                {
+                    id: 'tc-2', number: '2', title: '测试环境', type: 'text', prompt: '',
+                    children: [
+                        { id: 'tc-2-1', number: '2.1', title: '硬件环境', type: 'table', prompt: '请列出测试所需的硬件环境。\nMarkdown 表格，列：设备类型、配置要求、数量、用途。', children: [] },
+                        { id: 'tc-2-2', number: '2.2', title: '软件环境', type: 'table', prompt: '请根据项目技术栈，列出测试所需的软件环境。\nMarkdown 表格，列：软件名称、版本、用途。', children: [] },
+                        { id: 'tc-2-3', number: '2.3', title: '网络环境', type: 'text', prompt: '请描述测试所需的网络环境要求，包括网络拓扑、带宽要求、安全配置等。100-200字。', children: [] },
+                    ],
+                },
+                {
+                    id: 'tc-3', number: '3', title: '功能测试用例', type: 'text', prompt: '',
+                    children: [
+                        { id: 'tc-3-1', number: '3.1', title: '用户管理模块', type: 'table', prompt: '请编写用户管理相关的功能测试用例。\nMarkdown 表格，列：用例编号、用例名称、前置条件、测试步骤、预期结果、优先级。\n至少 5 条用例，涵盖正常流程和异常场景。', children: [] },
+                        { id: 'tc-3-2', number: '3.2', title: '核心业务模块', type: 'table', prompt: '请根据项目代码中的核心业务逻辑，编写功能测试用例。\nMarkdown 表格，列：用例编号、用例名称、前置条件、测试步骤、预期结果、优先级。\n至少 8 条用例。', children: [] },
+                        { id: 'tc-3-3', number: '3.3', title: '数据管理模块', type: 'table', prompt: '请编写数据增删改查相关的测试用例。\nMarkdown 表格，列：用例编号、用例名称、前置条件、测试步骤、预期结果、优先级。\n至少 5 条用例。', children: [] },
+                    ],
+                },
+                {
+                    id: 'tc-4', number: '4', title: '性能测试用例', type: 'table',
+                    prompt: '请编写性能测试用例。\nMarkdown 表格，列：用例编号、测试场景、并发用户数、持续时间、性能指标、通过标准。\n包含：页面响应时间、接口吞吐量、并发处理、数据库查询等场景，至少 5 条。',
+                    children: [],
+                },
+                {
+                    id: 'tc-5', number: '5', title: '安全测试用例', type: 'table',
+                    prompt: '请编写安全测试用例。\nMarkdown 表格，列：用例编号、用例名称、测试类别、测试步骤、预期结果。\n涵盖：SQL 注入、XSS、CSRF、越权访问、敏感信息泄露等，至少 6 条。',
+                    children: [],
+                },
+                {
+                    id: 'tc-6', number: '6', title: '兼容性测试用例', type: 'table',
+                    prompt: '请编写兼容性测试用例。\nMarkdown 表格，列：用例编号、测试环境、浏览器/设备、测试项、预期结果。\n涵盖主流浏览器和设备兼容性，至少 5 条。',
+                    children: [],
+                },
+            ],
+        },
+        {
+            id: 'tc-simple',
+            name: '精简版',
+            description: '适用于中小项目的精简测试用例文档',
+            sections: [
+                { id: 'tc-s-1', number: '1', title: '测试概述', type: 'text', prompt: '请编写测试概述，包含测试目的、测试范围、测试方法。300-500字。', children: [] },
+                {
+                    id: 'tc-s-2', number: '2', title: '测试环境', type: 'table',
+                    prompt: '请列出测试环境信息。\nMarkdown 表格，列：类别、名称、版本/配置、说明。包含硬件和软件环境。',
+                    children: [],
+                },
+                {
+                    id: 'tc-s-3', number: '3', title: '功能测试用例', type: 'table',
+                    prompt: '请根据项目功能，编写功能测试用例。\nMarkdown 表格，列：编号、功能模块、用例名称、测试步骤、预期结果、优先级。\n至少 15 条，覆盖主要功能。',
+                    children: [],
+                },
+                {
+                    id: 'tc-s-4', number: '4', title: '异常测试用例', type: 'table',
+                    prompt: '请编写异常场景的测试用例。\nMarkdown 表格，列：编号、异常场景、测试步骤、预期结果。\n包含：输入校验、边界值、网络异常、权限控制等，至少 8 条。',
+                    children: [],
+                },
+            ],
+        },
+        {
+            id: 'tc-acceptance',
+            name: '验收测试版',
+            description: '面向验收阶段的测试用例文档',
+            sections: [
+                { id: 'tc-a-1', number: '1', title: '验收测试目的', type: 'text', prompt: '请编写验收测试的目的和背景。说明验收标准依据和验收流程。200-300字。', children: [] },
+                {
+                    id: 'tc-a-2', number: '2', title: '验收标准', type: 'text',
+                    prompt: '请编写系统验收的总体标准，包括功能完整性、性能达标、安全合规、文档齐全等方面的要求。300-500字。',
+                    children: [],
+                },
+                {
+                    id: 'tc-a-3', number: '3', title: '功能验收用例', type: 'table',
+                    prompt: '请编写功能验收用例。\nMarkdown 表格，列：编号、验收项、验收内容、验收标准、验证方式。\n至少 10 条。',
+                    children: [],
+                },
+                {
+                    id: 'tc-a-4', number: '4', title: '性能验收用例', type: 'table',
+                    prompt: '请编写性能验收用例。\nMarkdown 表格，列：编号、指标名称、期望值、测试方法、通过条件。\n至少 5 条。',
+                    children: [],
+                },
+                {
+                    id: 'tc-a-5', number: '5', title: '验收结论模板', type: 'text',
+                    prompt: '请编写验收结论模板，包含验收结果汇总、遗留问题、改进建议、验收意见等部分。留出签字区域占位。300-500字。',
+                    children: [],
+                },
+            ],
+        },
+    ]
+}
+
+// ==================== 测试记录预设 ====================
+
+export function getTestRecordPresets() {
+    return [
+        {
+            id: 'tr-standard',
+            name: '标准版',
+            description: '完整的测试执行记录文档，包含执行记录、缺陷汇总和统计分析',
+            sections: [
+                {
+                    id: 'tr-1', number: '1', title: '引言', type: 'text', prompt: '',
+                    children: [
+                        { id: 'tr-1-1', number: '1.1', title: '测试目的', type: 'text', prompt: '请编写本次测试的目的和背景。说明测试阶段、测试类型和验证目标。200-300字。', children: [] },
+                        { id: 'tr-1-2', number: '1.2', title: '测试范围', type: 'text', prompt: '请描述本次测试覆盖的功能模块和测试类型。150-250字。', children: [] },
+                    ],
+                },
+                {
+                    id: 'tr-2', number: '2', title: '测试环境', type: 'table',
+                    prompt: '请列出本次测试使用的环境配置。\nMarkdown 表格，列：类别、名称、版本/配置。包含服务器、操作系统、数据库、浏览器等。',
+                    children: [],
+                },
+                {
+                    id: 'tr-3', number: '3', title: '测试执行记录', type: 'table',
+                    prompt: '请根据导入的测试数据，生成测试执行记录表格。\nMarkdown 表格，列：编号、用例名称、执行时间、测试人员、实际结果、是否通过、备注。\n如果有导入的 Excel 数据，请基于实际数据填写。',
+                    children: [],
+                },
+                {
+                    id: 'tr-4', number: '4', title: '缺陷汇总', type: 'table',
+                    prompt: '请根据测试执行中发现的问题，生成缺陷汇总表格。\nMarkdown 表格，列：缺陷编号、严重程度（致命/严重/一般/轻微）、缺陷描述、所属模块、状态（已修复/待修复/暂不处理）。',
+                    children: [],
+                },
+                {
+                    id: 'tr-5', number: '5', title: '测试统计', type: 'text', prompt: '',
+                    children: [
+                        { id: 'tr-5-1', number: '5.1', title: '用例执行统计', type: 'text', prompt: '请根据测试执行记录，统计用例执行情况。包含：总用例数、通过数、失败数、未执行数、通过率。以数据概览方式呈现。', children: [] },
+                        { id: 'tr-5-2', number: '5.2', title: '缺陷分布分析', type: 'text', prompt: '请分析缺陷分布情况，包括：按严重程度分布、按功能模块分布。给出分析结论。', children: [] },
+                    ],
+                },
+                {
+                    id: 'tr-6', number: '6', title: '测试结论', type: 'text',
+                    prompt: '请根据测试执行结果，编写测试结论。包含：总体评价、质量评估、遗留问题、风险分析和发布建议。300-500字。',
+                    children: [],
+                },
+            ],
+        },
+        {
+            id: 'tr-simple',
+            name: '精简版',
+            description: '适用于快速记录的精简测试报告',
+            sections: [
+                { id: 'tr-s-1', number: '1', title: '测试概述', type: 'text', prompt: '请编写测试概述，包含测试目的、范围、环境和方法。300-400字。', children: [] },
+                {
+                    id: 'tr-s-2', number: '2', title: '测试执行记录', type: 'table',
+                    prompt: '请根据导入的测试数据生成测试执行记录。\nMarkdown 表格，列：编号、测试项、实际结果、是否通过、备注。',
+                    children: [],
+                },
+                {
+                    id: 'tr-s-3', number: '3', title: '测试结论', type: 'text',
+                    prompt: '请编写测试结论。包含通过率统计、主要问题、质量评估和建议。200-400字。',
+                    children: [],
+                },
+            ],
+        },
+    ]
+}
+

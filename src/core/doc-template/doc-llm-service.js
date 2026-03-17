@@ -77,6 +77,8 @@ export function applyDocSectionResult(responseText, section) {
 
 /**
  * 批量生成所有启用的章节
+ * ① 已有有效内容的章节会自动跳过（断点续生成）
+ * ② 单章节超时保护（默认 120 秒），防止无限卡住
  * @param {Object} config - LLM 配置 { baseUrl, apiKey, model, providerId }
  * @param {Array} sections - 要生成的章节列表（扁平化的叶子节点）
  * @param {string} contextSummary - 代码库上下文摘要
@@ -84,14 +86,22 @@ export function applyDocSectionResult(responseText, section) {
  * @param {Function} onLog - 日志回调
  * @param {Function} onSectionDone - 单个章节完成回调 (section, index, total)
  * @param {Object} controller - AI 控制器（暂停/继续/取消）
- * @returns {Promise<{generated: number, total: number}>}
+ * @param {Object} opts - 额外选项 { timeoutMs: 单章节超时毫秒数(默认120000), forceRegenerate: 强制重新生成所有章节(默认false) }
+ * @returns {Promise<{generated: number, skipped: number, failed: number, total: number}>}
  */
-export async function fillDocSections(config, sections, contextSummary, docInfo = {}, onLog = () => { }, onSectionDone = () => { }, controller = null) {
-    if (sections.length === 0) return { generated: 0, total: 0 }
+export async function fillDocSections(config, sections, contextSummary, docInfo = {}, onLog = () => { }, onSectionDone = () => { }, controller = null, opts = {}) {
+    if (sections.length === 0) return { generated: 0, skipped: 0, failed: 0, total: 0 }
 
-    onLog(`[信息] 开始生成文档，共 ${sections.length} 个章节`, 'info')
+    const { timeoutMs = 120000, forceRegenerate = false } = opts
+
+    // 计算有多少章节需要生成
+    const needGenerate = forceRegenerate ? sections.length : sections.filter(s => !sectionHasContent(s)).length
+    onLog(`[信息] 开始生成文档，共 ${sections.length} 个章节${needGenerate < sections.length ? `（${sections.length - needGenerate} 个已有内容将跳过）` : ''}`, 'info')
 
     let generated = 0
+    let skipped = 0
+    let failed = 0
+
     for (let i = 0; i < sections.length; i++) {
         if (controller?.cancelled) {
             onLog(`[取消] 已取消生成`, 'warn')
@@ -105,6 +115,15 @@ export async function fillDocSections(config, sections, contextSummary, docInfo 
         }
 
         const section = sections[i]
+
+        // ① 断点续生成：跳过已有有效内容的章节
+        if (!forceRegenerate && sectionHasContent(section)) {
+            skipped++
+            onLog(`[跳过] [${i + 1}/${sections.length}] ${section.number} ${section.title} — 已有内容`, 'info')
+            onSectionDone(section, i, sections.length)
+            continue
+        }
+
         section.generating = true
         section.error = null
         onLog(`[进行] [${i + 1}/${sections.length}] ${section.number} ${section.title}`, 'info')
@@ -113,7 +132,13 @@ export async function fillDocSections(config, sections, contextSummary, docInfo 
             const messages = buildDocSectionPrompt(section, contextSummary, docInfo)
             // 图表类型使用更大的 maxTokens
             const maxTokens = section.type === 'diagram' ? 4096 : 8192
-            const responseText = await callLlm(config, messages, { maxTokens, temperature: 0.4, signal: controller?.signal })
+
+            // ② 超时保护：单章节超时，防止无限卡住
+            const responseText = await callLlmWithTimeout(
+                config, messages,
+                { maxTokens, temperature: 0.4, signal: controller?.signal },
+                timeoutMs,
+            )
             const success = applyDocSectionResult(responseText, section)
 
             section.generating = false
@@ -122,6 +147,7 @@ export async function fillDocSections(config, sections, contextSummary, docInfo 
                 section.error = null
                 onLog(`[完成] [${i + 1}/${sections.length}] ${section.number} ${section.title} ✓`, 'success')
             } else {
+                failed++
                 section.error = '生成内容为空，请重试'
                 onLog(`[警告] [${i + 1}/${sections.length}] ${section.number} ${section.title} - 内容为空`, 'warn')
             }
@@ -133,14 +159,54 @@ export async function fillDocSections(config, sections, contextSummary, docInfo 
                 onLog(`[取消] 用户取消了生成`, 'warn')
                 break
             }
+            failed++
             section.error = e.message || String(e)
-            onLog(`[失败] [${i + 1}/${sections.length}] ${section.number} ${section.title} 失败: ${e.message}`, 'error')
+            onLog(`[失败] [${i + 1}/${sections.length}] ${section.number} ${section.title}: ${e.message}`, 'error')
             onSectionDone(section, i, sections.length)
         }
     }
 
-    onLog(`[完成] 文档生成完成: ${generated}/${sections.length} 个章节`, 'info')
-    return { generated, total: sections.length }
+    const summary = [`已完成 ${generated}/${sections.length}`]
+    if (skipped > 0) summary.push(`跳过 ${skipped}（已有内容）`)
+    if (failed > 0) summary.push(`失败 ${failed}`)
+    onLog(`[完成] 文档生成完成: ${summary.join('，')}`, 'info')
+    return { generated, skipped, failed, total: sections.length }
+}
+
+/**
+ * 判断章节是否已有有效内容
+ */
+function sectionHasContent(section) {
+    if (section.type === 'diagram') {
+        return !!(section.mermaidCode && section.mermaidCode.trim())
+    }
+    return !!(section.content && section.content.trim())
+}
+
+/**
+ * 带超时的 callLlm 封装
+ * @param {number} timeoutMs - 超时毫秒数
+ */
+async function callLlmWithTimeout(config, messages, options, timeoutMs) {
+    if (!timeoutMs || timeoutMs <= 0) {
+        return callLlm(config, messages, options)
+    }
+
+    return new Promise((resolve, reject) => {
+        let settled = false
+        const timer = setTimeout(() => {
+            if (!settled) {
+                settled = true
+                reject(new Error(`章节生成超时（${Math.round(timeoutMs / 1000)}秒），模型可能卡住，已自动跳过`))
+            }
+        }, timeoutMs)
+
+        callLlm(config, messages, options).then(result => {
+            if (!settled) { settled = true; clearTimeout(timer); resolve(result) }
+        }).catch(err => {
+            if (!settled) { settled = true; clearTimeout(timer); reject(err) }
+        })
+    })
 }
 
 // 重新导出 createAiController 方便引用

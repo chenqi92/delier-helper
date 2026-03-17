@@ -53,7 +53,7 @@
 </template>
 
 <script>
-import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server } from 'lucide-vue-next'
+import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList } from 'lucide-vue-next'
 import { markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
 import UpdateChecker from './components/UpdateChecker.vue'
@@ -63,12 +63,14 @@ import DbDocGenerator from './views/DbDocGenerator.vue'
 import SrsGenerator from './views/SrsGenerator.vue'
 import SddGenerator from './views/SddGenerator.vue'
 import OpsManualGenerator from './views/OpsManualGenerator.vue'
+import TestCaseGenerator from './views/TestCaseGenerator.vue'
+import TestRecordGenerator from './views/TestRecordGenerator.vue'
 import AiSettings from './views/AiSettings.vue'
 import { globalStore, initStore } from './core/global-store.js'
 
 export default {
   name: 'App',
-  components: { AiSidebar, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, AiSettings, Server },
+  components: { AiSidebar, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, AiSettings, Server, ClipboardCheck, ClipboardList },
   provide() {
     return {
       showToast: this.showToast,
@@ -92,6 +94,8 @@ export default {
         { id: 'srs-doc',   label: '需求文档', icon: markRaw(BookOpen) },
         { id: 'sdd-doc',   label: '设计文档', icon: markRaw(FileCheck) },
         { id: 'ops-doc',   label: '运维手册', icon: markRaw(Server) },
+        { id: 'tc-doc',    label: '测试用例', icon: markRaw(ClipboardCheck) },
+        { id: 'tr-doc',    label: '测试记录', icon: markRaw(ClipboardList) },
         { id: 'ai-settings', label: 'AI 设置', icon: markRaw(Bot) },
       ],
       viewMap: {
@@ -101,6 +105,8 @@ export default {
         'srs-doc': 'SrsGenerator',
         'sdd-doc': 'SddGenerator',
         'ops-doc': 'OpsManualGenerator',
+        'tc-doc': 'TestCaseGenerator',
+        'tr-doc': 'TestRecordGenerator',
         'ai-settings': 'AiSettings',
       },
     }
