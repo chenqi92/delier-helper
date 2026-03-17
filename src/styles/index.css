@@ -831,14 +831,16 @@ select.form-input {
 
 .message-toast {
     position: fixed;
-    top: 20px;
+    bottom: 20px;
     right: 20px;
-    padding: 12px 20px;
+    padding: 10px 20px;
     border-radius: var(--radius-sm);
     font-size: 13px;
     z-index: 9999;
-    animation: slideIn 0.3s ease;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    animation: toastSlideUp 0.3s ease;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    max-width: 400px;
+    pointer-events: auto;
 }
 
 .message-toast.success {
@@ -865,14 +867,14 @@ select.form-input {
     color: var(--warning-500);
 }
 
-@keyframes slideIn {
+@keyframes toastSlideUp {
     from {
-        transform: translateX(100%);
+        transform: translateY(100%);
         opacity: 0;
     }
 
     to {
-        transform: translateX(0);
+        transform: translateY(0);
         opacity: 1;
     }
 }

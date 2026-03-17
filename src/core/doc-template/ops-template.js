@@ -1,6 +1,5 @@
 /**
  * 运维手册模板预设定义
- * 基于参考文档（十堰无人机服务器运维手册）结构
  */
 import { createSectionNode, toTemplateSkeleton } from './template-presets.js'
 import { renumberSections } from './srs-template.js'
