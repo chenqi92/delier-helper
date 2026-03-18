@@ -228,7 +228,10 @@ export async function loadProviderConfigs() {
     try {
         const store = await getStore()
         const providers = await store.get('providerConfigs')
-        if (Array.isArray(providers) && providers.length > 0) return providers
+        if (Array.isArray(providers) && providers.length > 0) {
+            providers.sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999))
+            return providers
+        }
 
         // === 兼容旧数据迁移 ===
         const oldConfigs = await store.get('configs')

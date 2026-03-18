@@ -22,11 +22,18 @@
 
             <div class="ai-cfg-list">
               <div
-                v-for="cfg in globalStore.providerConfigs"
+                v-for="(cfg, idx) in globalStore.providerConfigs"
                 :key="cfg.id"
-                :class="['ai-cfg-item', { active: editingId === cfg.id }]"
+                :class="['ai-cfg-item', { active: editingId === cfg.id, 'drag-over': providerDragOver === idx }]"
                 @click="selectProvider(cfg)"
+                draggable="true"
+                @dragstart="onProviderDragStart(idx, $event)"
+                @dragover.prevent="onProviderDragOver(idx)"
+                @dragleave="providerDragOver = -1"
+                @drop.prevent="onProviderDrop(idx)"
+                @dragend="providerDragOver = -1"
               >
+                <GripVertical :size="12" class="drag-handle" />
                 <div class="ai-cfg-item-main">
                   <span class="ai-cfg-item-name">{{ cfg.label || '未命名' }}</span>
                   <span class="ai-cfg-item-model">{{ cfg.models.length }} 个模型</span>
@@ -138,16 +145,30 @@
               <table class="ai-model-table">
                 <thead>
                   <tr>
-                    <th style="width:30%;">模型 ID</th>
-                    <th style="width:20%;">显示名</th>
+                    <th style="width:4%;"></th>
+                    <th style="width:28%;">模型 ID</th>
+                    <th style="width:18%;">显示名</th>
                     <th style="width:22%;">能力</th>
                     <th style="width:18%;">上下文长度</th>
                     <th style="width:10%;"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(m, idx) in form.models" :key="m.id">
-                    <td class="model-id-cell">{{ m.id }}</td>
+                  <tr
+                    v-for="(m, idx) in form.models" :key="m.id"
+                    :class="{ 'drag-over-row': modelDragOver === idx }"
+                    draggable="true"
+                    @dragstart="onModelDragStart(idx, $event)"
+                    @dragover.prevent="onModelDragOver(idx)"
+                    @dragleave="modelDragOver = -1"
+                    @drop.prevent="onModelDrop(idx)"
+                    @dragend="modelDragOver = -1"
+                  >
+                    <td style="cursor:grab;text-align:center;"><GripVertical :size="12" style="opacity:0.4;" /></td>
+                    <td class="model-id-cell">
+                      {{ m.id }}
+                      <span v-if="idx === 0" class="default-model-tag">默认</span>
+                    </td>
                     <td>{{ m.label }}</td>
                     <td>
                       <span v-if="m.capabilities?.multimodal" class="cap-tag cap-multimodal">多模态</span>
@@ -284,7 +305,7 @@
 <script>
 import {
   Bot, Settings, Check, Eye, EyeOff, Wifi, Save,
-  Plus, Trash2, X, Layers, Search, Lightbulb, Edit3
+  Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical
 } from 'lucide-vue-next'
 import {
   LLM_PROVIDERS, loadProviderConfigs, upsertProviderConfig,
@@ -295,7 +316,7 @@ import { refreshProviderConfigs } from '../core/global-store.js'
 
 export default {
   name: 'AiSettings',
-  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Plus, Trash2, X, Layers, Search, Lightbulb, Edit3 },
+  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical },
   inject: ['showToast', 'globalStore'],
   data() {
     return {
@@ -312,6 +333,11 @@ export default {
       newModel: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32 },
       editingModelIdx: null,
       editModelForm: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32 },
+      // 拖拽排序状态
+      providerDragIdx: -1,
+      providerDragOver: -1,
+      modelDragIdx: -1,
+      modelDragOver: -1,
     }
   },
   computed: {
@@ -488,7 +514,7 @@ export default {
       this.detecting = false
     },
 
-    async save() {
+    async save(silent = false) {
       if (!this.form.label) {
         const preset = this.providerPresets.find(p => p.id === this.form.providerId)
         this.form.label = preset ? preset.label : this.form.providerId
@@ -499,9 +525,11 @@ export default {
       await upsertProviderConfig(this.form)
       await refreshProviderConfigs()
       this.editingId = this.form.id
-      this.saved = true
-      this.showToast('配置已保存', 'success')
-      setTimeout(() => { this.saved = false }, 3000)
+      if (!silent) {
+        this.saved = true
+        this.showToast('配置已保存', 'success')
+        setTimeout(() => { this.saved = false }, 3000)
+      }
     },
 
     async removeProvider(cfg) {
@@ -523,6 +551,51 @@ export default {
       if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`
       if (n >= 1000) return `${(n / 1000).toFixed(0)}K`
       return String(n)
+    },
+
+    // ===== 厂商拖拽排序 =====
+    onProviderDragStart(idx, e) {
+      this.providerDragIdx = idx
+      e.dataTransfer.effectAllowed = 'move'
+    },
+    onProviderDragOver(idx) {
+      if (this.providerDragIdx === idx) return
+      this.providerDragOver = idx
+    },
+    async onProviderDrop(targetIdx) {
+      this.providerDragOver = -1
+      const fromIdx = this.providerDragIdx
+      if (fromIdx < 0 || fromIdx === targetIdx) return
+      const arr = [...this.globalStore.providerConfigs]
+      const [moved] = arr.splice(fromIdx, 1)
+      arr.splice(targetIdx, 0, moved)
+      this.globalStore.providerConfigs = arr
+      // 持久化顺序
+      for (let i = 0; i < arr.length; i++) {
+        arr[i].sortOrder = i
+        await upsertProviderConfig(arr[i])
+      }
+    },
+
+    // ===== 模型拖拽排序 =====
+    onModelDragStart(idx, e) {
+      this.modelDragIdx = idx
+      e.dataTransfer.effectAllowed = 'move'
+    },
+    onModelDragOver(idx) {
+      if (this.modelDragIdx === idx) return
+      this.modelDragOver = idx
+    },
+    async onModelDrop(targetIdx) {
+      this.modelDragOver = -1
+      const fromIdx = this.modelDragIdx
+      if (fromIdx < 0 || fromIdx === targetIdx) return
+      const [moved] = this.form.models.splice(fromIdx, 1)
+      this.form.models.splice(targetIdx, 0, moved)
+      // 第一个模型自动成为默认
+      this.form.activeModelId = this.form.models[0]?.id || ''
+      // 自动保存排序结果
+      await this.save(true)
     },
   },
 }
@@ -794,5 +867,44 @@ export default {
   gap: 8px;
   padding: 12px 16px;
   border-top: 1px solid var(--border-color);
+}
+
+/* 拖拽排序 */
+.drag-handle {
+  opacity: 0.3;
+  cursor: grab;
+  flex-shrink: 0;
+  transition: opacity 0.15s;
+}
+.ai-cfg-item:hover .drag-handle {
+  opacity: 0.7;
+}
+.ai-cfg-item.drag-over {
+  border-color: var(--primary-400) !important;
+  background: rgba(99, 102, 241, 0.12);
+}
+.drag-over-row {
+  outline: 2px solid var(--primary-400);
+  outline-offset: -2px;
+  background: rgba(99, 102, 241, 0.08) !important;
+}
+.ai-model-table tbody tr {
+  cursor: grab;
+}
+.ai-model-table tbody tr:active {
+  cursor: grabbing;
+}
+
+/* 默认模型标签 */
+.default-model-tag {
+  display: inline-block;
+  padding: 0 5px;
+  margin-left: 6px;
+  border-radius: 6px;
+  font-size: 9px;
+  font-weight: 600;
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  vertical-align: 1px;
 }
 </style>

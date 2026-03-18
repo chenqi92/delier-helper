@@ -16,7 +16,7 @@
         <span v-else-if="schema" style="font-size:12px;color:var(--success-500);">
           <Check :size="12" /> {{ schema.tables.length }} 个表，{{ schema.columns.length }} 个字段
         </span>
-        <div class="ai-fill-group" v-if="schema">
+        <div class="ai-fill-group" v-if="schema && viewMode === 'table'">
           <button v-if="!aiProcessing" class="btn btn-primary btn-sm" @click="startAiFill">
             <Bot :size="14" /> AI 补充
           </button>
@@ -251,7 +251,7 @@
           </div>
 
           <!-- ER 图视图 -->
-          <div v-if="viewMode === 'er'" class="er-diagram-wrap">
+          <div v-show="viewMode === 'er'" class="er-diagram-wrap">
             <div class="er-diagram-header">
               <div style="display:flex;align-items:center;gap:10px;">
                 <span style="font-size:13px;font-weight:600;color:var(--text-primary);">表关系图</span>
@@ -300,7 +300,7 @@
           </div>
 
           <!-- 关系图视图（每表独立实体图） -->
-          <div v-if="viewMode === 'relation'" class="er-diagram-wrap">
+          <div v-show="viewMode === 'relation'" class="er-diagram-wrap">
             <div class="er-diagram-header">
               <div style="display:flex;align-items:center;gap:10px;">
                 <span style="font-size:13px;font-weight:600;color:var(--text-primary);">实体属性图</span>
@@ -347,7 +347,7 @@
           </div>
 
           <!-- 表结构列表 -->
-          <div v-if="viewMode === 'table'" class="api-preview-scroll">
+          <div v-show="viewMode === 'table'" class="api-preview-scroll">
             <div v-for="(table, tIdx) in filteredTables" :key="table.name" class="api-module-group">
               <div class="api-module-header" @click="toggleTableExpand(table.name)">
                 <div style="display:flex;align-items:center;gap:8px;">
@@ -645,16 +645,20 @@ export default {
       this.diagramScale = 1
       this.diagramX = 0
       this.diagramY = 0
-      this.erConfirmed = false
       if (val === 'er') {
-        if (this.filteredTables.length > 30) {
-          // 大量表时等用户确认
-          return
+        // 仅在尚未渲染时触发渲染（v-show 保留了 DOM）
+        const content = this.$refs.erContent
+        if (!content || !content.innerHTML) {
+          if (this.filteredTables.length > 30 && !this.erConfirmed) return
+          this.$nextTick(() => this.renderErDiagram())
         }
-        this.$nextTick(() => this.renderErDiagram())
       } else if (val === 'relation') {
-        this.currentEntityTableIndex = 0
-        this.$nextTick(() => this.renderEntityDiagram())
+        // 仅在尚未渲染时触发渲染
+        const content = this.$refs.entityContent
+        if (!content || !content.innerHTML) {
+          this.currentEntityTableIndex = 0
+          this.$nextTick(() => this.renderEntityDiagram())
+        }
       }
     },
     filteredTables() {
