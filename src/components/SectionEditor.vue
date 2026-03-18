@@ -460,7 +460,7 @@ export default {
             rowIndex = 0
             tableHtml = '<table class="detail-table editable-table" style="width:100%;margin:8px 0;"><thead>'
           }
-          const cells = line.split('|').filter(c => c !== '').map(c => c.trim())
+          const cells = line.split('|').slice(1, -1).map(c => c.trim())
           if (isFirstRow) {
             tableHtml += '<tr>' + cells.map((c, ci) =>
               `<th data-row="${rowIndex}" data-col="${ci}" title="点击编辑">${c}</th>`
