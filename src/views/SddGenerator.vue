@@ -441,7 +441,8 @@ export default {
       try {
         const contextSummary = buildContextSummary(this.scanResult, this.docInfo, this.referenceFiles)
         const messages = buildDocSectionPrompt(section, contextSummary, this.docInfo)
-        const maxTokens = section.type === 'diagram' ? 4096 : 8192
+        const defaultMaxTokens = section.type === 'diagram' ? 4096 : 16384
+        const maxTokens = config.maxOutputTokens || defaultMaxTokens
         const responseText = await callLlm(config, messages, { maxTokens, temperature: 0.4 })
         applyDocSectionResult(responseText, section)
         section.generating = false

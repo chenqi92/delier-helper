@@ -146,10 +146,11 @@
                 <thead>
                   <tr>
                     <th style="width:4%;"></th>
-                    <th style="width:28%;">模型 ID</th>
-                    <th style="width:18%;">显示名</th>
-                    <th style="width:22%;">能力</th>
-                    <th style="width:18%;">上下文长度</th>
+                    <th style="width:24%;">模型 ID</th>
+                    <th style="width:14%;">显示名</th>
+                    <th style="width:20%;">能力</th>
+                    <th style="width:14%;">上下文长度</th>
+                    <th style="width:14%;">最大输出</th>
                     <th style="width:10%;"></th>
                   </tr>
                 </thead>
@@ -180,6 +181,15 @@
                       <span v-if="!m.capabilities?.multimodal && !m.capabilities?.deepThinking && !m.capabilities?.codeGen && !m.capabilities?.webSearch && !m.capabilities?.functionCall && !m.capabilities?.longContext" class="cap-tag cap-text">文本</span>
                     </td>
                     <td>{{ formatCtx(m.contextLength) }}</td>
+                    <td>
+                      <input
+                        type="number"
+                        class="inline-number-input"
+                        :value="m.maxOutputTokens || 16384"
+                        @change="onMaxOutputTokensChange(idx, $event)"
+                        title="模型单次最大输出 Token 数"
+                      />
+                    </td>
                     <td>
                       <div style="display:flex;gap:2px;align-items:center;">
                         <button
@@ -245,6 +255,13 @@
                     <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">= {{ (newModel.contextLengthK || 0) * 1024 }} tokens</span>
                   </div>
                 </div>
+                <div class="form-group">
+                  <label class="form-label">最大输出 Token</label>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="number" class="form-input" style="flex:1;" v-model.number="newModel.maxOutputTokens" placeholder="8192" />
+                    <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">单次最大输出长度</span>
+                  </div>
+                </div>
               </div>
               <div class="ai-modal-footer">
                 <button class="btn btn-secondary btn-sm" @click="showAddModel = false">取消</button>
@@ -282,6 +299,13 @@
                   <div style="display:flex;align-items:center;gap:6px;">
                     <input type="number" class="form-input" style="flex:1;" v-model.number="editModelForm.contextLengthK" />
                     <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">= {{ (editModelForm.contextLengthK || 0) * 1024 }} tokens</span>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">最大输出 Token</label>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="number" class="form-input" style="flex:1;" v-model.number="editModelForm.maxOutputTokens" placeholder="8192" />
+                    <span style="font-size:11px;color:var(--text-muted);white-space:nowrap;">单次最大输出长度</span>
                   </div>
                 </div>
               </div>
@@ -330,9 +354,9 @@ export default {
       detectResult: null,
       saved: false,
       showAddModel: false,
-      newModel: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32 },
+      newModel: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: 16384 },
       editingModelIdx: null,
-      editModelForm: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32 },
+      editModelForm: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: 16384 },
       // 拖拽排序状态
       providerDragIdx: -1,
       providerDragOver: -1,
@@ -427,9 +451,10 @@ export default {
           longContext: this.newModel.longContext,
         },
         contextLength: (this.newModel.contextLengthK || 32) * 1024,
+        maxOutputTokens: this.newModel.maxOutputTokens || 16384,
         custom: true,
       })
-      this.newModel = { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32 }
+      this.newModel = { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: 16384 }
       this.showAddModel = false
     },
 
@@ -446,6 +471,7 @@ export default {
         functionCall: !!m.capabilities?.functionCall,
         longContext: !!m.capabilities?.longContext,
         contextLengthK: Math.round((m.contextLength || 32768) / 1024),
+        maxOutputTokens: m.maxOutputTokens || 16384,
       }
     },
     saveEditModel() {
@@ -464,6 +490,7 @@ export default {
           longContext: f.longContext,
         },
         contextLength: (f.contextLengthK || 32) * 1024,
+        maxOutputTokens: f.maxOutputTokens || 16384,
       }
       this.editingModelIdx = null
     },
@@ -596,6 +623,10 @@ export default {
       this.form.activeModelId = this.form.models[0]?.id || ''
       // 自动保存排序结果
       await this.save(true)
+    },
+    onMaxOutputTokensChange(idx, event) {
+      const val = parseInt(event.target.value)
+      this.form.models[idx].maxOutputTokens = val > 0 ? val : 16384
     },
   },
 }
@@ -906,5 +937,29 @@ export default {
   background: rgba(34, 197, 94, 0.15);
   color: #22c55e;
   vertical-align: 1px;
+}
+
+/* 内联数字输入框 */
+.inline-number-input {
+  width: 72px;
+  height: 24px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary, #94a3b8);
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+  transition: border-color 0.15s, background 0.15s;
+}
+.inline-number-input:hover {
+  border-color: var(--border-primary, #334155);
+  background: var(--bg-secondary, #1e293b);
+}
+.inline-number-input:focus {
+  border-color: var(--primary-400, #818cf8);
+  background: var(--bg-primary, #0f172a);
+  color: var(--text-primary, #f1f5f9);
 }
 </style>

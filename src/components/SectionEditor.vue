@@ -452,7 +452,11 @@ export default {
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trim()
-        if (line.startsWith('|') && line.endsWith('|')) {
+        // 完整表格行 或 以|开头但被截断的行（AI输出被token限制截断时常见）
+        const isTableRow = line.startsWith('|') && line.endsWith('|')
+        const isTruncatedRow = !isTableRow && line.startsWith('|') && inTable && line.includes('|')
+        if (isTableRow || isTruncatedRow) {
+          const normalizedLine = isTruncatedRow ? line + ' |' : line
           if (/^[\s\-|:]+$/.test(line.replace(/\|/g, ''))) continue
           if (!inTable) {
             inTable = true
@@ -460,7 +464,7 @@ export default {
             rowIndex = 0
             tableHtml = '<table class="detail-table editable-table" style="width:100%;margin:8px 0;"><thead>'
           }
-          const cells = line.split('|').slice(1, -1).map(c => c.trim())
+          const cells = normalizedLine.split('|').slice(1, -1).map(c => c.trim())
           if (isFirstRow) {
             tableHtml += '<tr>' + cells.map((c, ci) =>
               `<th data-row="${rowIndex}" data-col="${ci}" title="点击编辑">${c}</th>`

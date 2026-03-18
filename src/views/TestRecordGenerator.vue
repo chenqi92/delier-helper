@@ -435,7 +435,8 @@ export default {
         let contextSummary = `项目名称: ${this.docInfo.projectName || '未指定'}\n`
         contextSummary += this._buildExcelContext()
         const messages = buildDocSectionPrompt(section, contextSummary, this.docInfo)
-        const responseText = await callLlm(config, messages, { maxTokens: 8192, temperature: 0.4 })
+        const maxTokens = config.maxOutputTokens || 16384
+        const responseText = await callLlm(config, messages, { maxTokens, temperature: 0.4 })
         applyDocSectionResult(responseText, section)
         section.generating = false
         section.error = null

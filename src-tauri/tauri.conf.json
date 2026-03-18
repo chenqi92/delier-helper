@@ -40,7 +40,6 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "signingIdentity": "Developer ID Application: yuqin sun (2U97K3U27A)",
       "minimumSystemVersion": "10.15"
     },
     "windows": {

@@ -130,8 +130,9 @@ export async function fillDocSections(config, sections, contextSummary, docInfo 
 
         try {
             const messages = buildDocSectionPrompt(section, contextSummary, docInfo)
-            // 图表类型使用更大的 maxTokens
-            const maxTokens = section.type === 'diagram' ? 4096 : 8192
+            // 优先使用模型配置的 maxOutputTokens，否则使用类型默认值
+            const defaultMaxTokens = section.type === 'diagram' ? 4096 : 16384
+            const maxTokens = config.maxOutputTokens || defaultMaxTokens
 
             // ② 超时保护：单章节超时，防止无限卡住
             const responseText = await callLlmWithTimeout(

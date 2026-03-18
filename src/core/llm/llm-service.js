@@ -338,11 +338,14 @@ export async function saveActiveSelection(providerId, modelId) {
  */
 export function getResolvedConfig(providerCfg, modelId) {
     if (!providerCfg) return null
+    const resolvedModelId = modelId || providerCfg.activeModelId || (providerCfg.models[0]?.id || '')
+    const modelObj = providerCfg.models.find(m => m.id === resolvedModelId)
     return {
         providerId: providerCfg.providerId,
         baseUrl: providerCfg.baseUrl,
         apiKey: providerCfg.apiKey,
-        model: modelId || providerCfg.activeModelId || (providerCfg.models[0]?.id || ''),
+        model: resolvedModelId,
+        maxOutputTokens: modelObj?.maxOutputTokens || 0,
     }
 }
 
