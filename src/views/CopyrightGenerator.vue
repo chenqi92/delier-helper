@@ -212,7 +212,10 @@
               <label class="checkbox-label"><input type="checkbox" v-model="config.cleanOptions.removeEmptyLines" /> 移除空行</label>
               <label class="checkbox-label"><input type="checkbox" v-model="config.cleanOptions.removeTrailingWhitespace" /> 移除行尾空白</label>
               <label class="checkbox-label"><input type="checkbox" v-model="config.cleanOptions.removeImports" /> 移除 import 语句</label>
-              <label class="checkbox-label"><input type="checkbox" v-model="config.cleanOptions.removeCopyrightHeaders" /> 移除版权声明</label>
+              <label class="checkbox-label"><input type="checkbox" v-model="config.cleanOptions.removeCopyrightHeaders" /> 移除开源许可协议头部声明</label>
+            </div>
+            <div v-if="config.cleanOptions.removeCopyrightHeaders" class="license-hint">
+              自动移除文件头部的开源许可协议声明，如 <code>Copyright ©</code>、<code>Licensed under MIT</code>、<code>All rights reserved</code> 等
             </div>
           </div>
         </div>
