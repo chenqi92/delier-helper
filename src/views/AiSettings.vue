@@ -104,6 +104,12 @@
                 <span>本地服务无需 API Key，确保服务已启动后使用「检测模型」获取可用列表</span>
               </div>
 
+              <!-- 厂商说明 -->
+              <div v-if="currentProviderNote" class="tip" style="margin:0;">
+                <Lightbulb :size="14" class="tip-icon" />
+                <span>{{ currentProviderNote }}</span>
+              </div>
+
               <!-- 操作按钮 -->
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;">
                 <button class="btn btn-secondary btn-sm" @click="doTest" :disabled="testing || !isFormValid">
@@ -126,15 +132,19 @@
             <div class="card-header">
               <h3><Layers :size="14" /> 可用模型</h3>
               <div style="display:flex;gap:6px;">
-                <button class="btn btn-secondary btn-sm" @click="doDetect" :disabled="detecting || !form.baseUrl">
+                <button class="btn btn-primary btn-sm" @click="doDetect" :disabled="detecting || !form.baseUrl">
                   <span v-if="detecting" class="spinner" style="width:12px;height:12px;"></span>
                   <Search v-else :size="12" />
-                  {{ detecting ? '检测中...' : '检测模型' }}
+                  {{ detecting ? '检测中...' : '检测模型（推荐）' }}
                 </button>
                 <button class="btn btn-secondary btn-sm" @click="showAddModel = true">
                   <Plus :size="12" /> 自定义模型
                 </button>
               </div>
+            </div>
+            <div class="tip" style="margin:8px 12px 0;">
+              <Lightbulb :size="14" class="tip-icon" />
+              <span>预置模型列表可能滞后于官方发布，建议点击右上角「检测模型」从 API 拉取当前可用的最新模型清单</span>
             </div>
             <div v-if="detectResult" style="padding:8px 12px 0;">
               <span :style="{ fontSize: '12px', color: detectResult.success ? 'var(--success-500)' : 'var(--danger-500)' }">
@@ -376,6 +386,11 @@ export default {
       if (!this.form) return false
       const preset = this.providerPresets.find(p => p.id === this.form.providerId)
       return preset ? !!preset.local : false
+    },
+    currentProviderNote() {
+      if (!this.form) return ''
+      const preset = this.providerPresets.find(p => p.id === this.form.providerId)
+      return preset?.note || ''
     },
   },
   async mounted() {
