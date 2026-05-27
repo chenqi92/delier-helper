@@ -127,6 +127,19 @@ export const LLM_PROVIDERS = [
         ],
     },
     {
+        id: 'xiaomimimo',
+        label: '小米 MiMo',
+        baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
+        note: '兼容 OpenAI 接口协议，Anthropic 兼容路径为 /anthropic',
+        models: [
+            { id: 'mimo-7b-rl', label: 'MiMo 7B RL', capabilities: { deepThinking: true, codeGen: true }, contextLength: 32768 },
+            { id: 'mimo-7b-rl-zero', label: 'MiMo 7B RL Zero', capabilities: { deepThinking: true, codeGen: true }, contextLength: 32768 },
+            { id: 'mimo-7b-base', label: 'MiMo 7B Base', capabilities: { codeGen: true }, contextLength: 32768 },
+            { id: 'mimo-vl-7b-rl', label: 'MiMo VL 7B RL', capabilities: { multimodal: true, deepThinking: true, codeGen: true }, contextLength: 32768 },
+            { id: 'mimo-vl-7b-sft', label: 'MiMo VL 7B SFT', capabilities: { multimodal: true, codeGen: true }, contextLength: 32768 },
+        ],
+    },
+    {
         id: 'siliconflow',
         label: 'SiliconFlow',
         baseUrl: 'https://api.siliconflow.cn/v1',

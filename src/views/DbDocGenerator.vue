@@ -92,6 +92,32 @@
               </select>
             </div>
 
+            <!-- Oracle Instant Client 状态 -->
+            <div v-if="config.db_type === 'oracle' && oracleStatus && !oracleStatus.installed" class="tip" style="margin:0 0 10px;align-items:flex-start;">
+              <Lightbulb :size="14" class="tip-icon" style="margin-top:2px;" />
+              <div style="flex:1;">
+                <div style="font-size:12px;color:var(--text-primary);margin-bottom:6px;">
+                  使用 Oracle 需要 Instant Client（{{ oracleStatus.platform }}，约 30MB）。
+                </div>
+                <div v-if="!oracleStatus.supported" style="font-size:11px;color:var(--danger-500);">
+                  当前平台暂不支持自动下载，请手动下载 Instant Client Basic Light 并解压到：<br>
+                  <code style="font-size:10px;word-break:break-all;">{{ oracleStatus.installDir }}</code>
+                </div>
+                <div v-else-if="oracleInstalling" style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-secondary);">
+                  <span class="spinner" style="width:12px;height:12px;"></span>
+                  正在下载并解压 Instant Client，请耐心等待...
+                </div>
+                <div v-else style="display:flex;gap:6px;flex-wrap:wrap;">
+                  <button class="btn btn-primary btn-sm" @click="installOracleClient">
+                    <Download :size="12" /> 自动下载安装
+                  </button>
+                  <a v-if="oracleStatus.downloadUrl" :href="oracleStatus.downloadUrl" target="_blank" rel="noopener" class="btn btn-secondary btn-sm" style="text-decoration:none;">
+                    查看下载链接
+                  </a>
+                </div>
+              </div>
+            </div>
+
             <!-- 主机 & 端口 -->
             <div class="form-row">
               <div class="form-group">
@@ -118,14 +144,17 @@
 
             <!-- 数据库名 -->
             <div class="form-group">
-              <label class="form-label">数据库名 <span style="color:var(--text-muted);font-weight:400;">(可连接后选择)</span></label>
-              <div v-if="availableDatabases.length > 0" style="display:flex;gap:4px;">
+              <label class="form-label">
+                {{ dbNameLabel }}
+                <span style="color:var(--text-muted);font-weight:400;">{{ dbNameHint }}</span>
+              </label>
+              <div v-if="availableDatabases.length > 0 && config.db_type !== 'oracle'" style="display:flex;gap:4px;">
                 <select class="form-input" v-model="config.database" style="flex:1;">
                   <option value="">请选择数据库...</option>
                   <option v-for="db in availableDatabases" :key="db" :value="db">{{ db }}</option>
                 </select>
               </div>
-              <input v-else type="text" class="form-input" v-model="config.database" placeholder="可留空，连接后选择" />
+              <input v-else type="text" class="form-input" v-model="config.database" :placeholder="dbNamePlaceholder" />
             </div>
 
             <!-- 操作按钮 -->
@@ -164,7 +193,8 @@
             <!-- 提示 -->
             <div v-if="!isConnConfigComplete && (config.host || config.username)" class="tip" style="margin-top:8px;">
               <Lightbulb :size="14" class="tip-icon" />
-              <span>请填写主机、端口和用户名</span>
+              <span v-if="config.db_type === 'oracle'">请填写主机、端口、用户名和 Service Name</span>
+              <span v-else>请填写主机、端口和用户名</span>
             </div>
             <div v-else-if="isConnConfigComplete && !config.database && connStatus === 'connected' && availableDatabases.length === 0" class="tip" style="margin-top:8px;">
               <Lightbulb :size="14" class="tip-icon" />
@@ -515,6 +545,8 @@ export default {
       dbTypes: [
         { value: 'mysql', label: 'MySQL', defaultPort: 3306, defaultUser: 'root' },
         { value: 'postgres', label: 'PostgreSQL', defaultPort: 5432, defaultUser: 'postgres' },
+        { value: 'sqlserver', label: 'SQL Server', defaultPort: 1433, defaultUser: 'sa' },
+        { value: 'oracle', label: 'Oracle', defaultPort: 1521, defaultUser: 'system' },
       ],
       availableDatabases: [],
       loading: false,
@@ -556,6 +588,8 @@ export default {
       selectedProviderId: null,
       selectedModelId: null,
       savedConnections: [],
+      oracleStatus: null,
+      oracleInstalling: false,
       guideFinished: false,
       isActive: true,
       guideSteps: [
@@ -569,6 +603,9 @@ export default {
     this.loadSavedConnections()
     const gf = await getSetting('guide-finished-db', false).catch(() => false)
     if (gf) this.guideFinished = true
+    if (this.config.db_type === 'oracle') {
+      this.refreshOracleStatus()
+    }
   },
   computed: {
     currentProviderModels() {
@@ -577,10 +614,29 @@ export default {
     },
     isConnConfigComplete() {
       const c = this.config
-      return c.host && c.port && c.username
+      if (!(c.host && c.port && c.username)) return false
+      // Oracle 连接必须指定 Service Name 且 Instant Client 已安装
+      if (c.db_type === 'oracle') {
+        if (!c.database) return false
+        if (this.oracleStatus && !this.oracleStatus.installed) return false
+      }
+      return true
     },
     isConfigComplete() {
       return this.isConnConfigComplete && !!this.config.database
+    },
+    dbNameLabel() {
+      return this.config.db_type === 'oracle' ? 'Service Name / SID' : '数据库名'
+    },
+    dbNameHint() {
+      if (this.config.db_type === 'oracle') return '(必填)'
+      if (this.config.db_type === 'sqlserver') return '(可连接后选择)'
+      return '(可连接后选择)'
+    },
+    dbNamePlaceholder() {
+      if (this.config.db_type === 'oracle') return '例如 ORCL / XEPDB1'
+      if (this.config.db_type === 'sqlserver') return 'master'
+      return '可留空，连接后选择'
     },
     diagramTransformStyle() {
       return {
@@ -702,6 +758,34 @@ export default {
       this.dbVersion = ''
       this.availableDatabases = []
       this.config.database = ''
+      if (this.config.db_type === 'oracle') {
+        this.refreshOracleStatus()
+      }
+    },
+
+    async refreshOracleStatus() {
+      try {
+        this.oracleStatus = await invoke('oracle_client_status')
+      } catch (e) {
+        console.warn('获取 Oracle 客户端状态失败:', e)
+      }
+    },
+
+    async installOracleClient() {
+      if (this.oracleInstalling) return
+      this.oracleInstalling = true
+      try {
+        const result = await invoke('oracle_client_install')
+        if (result.success) {
+          this.showToast('Oracle Instant Client 安装成功，建议重启应用以确保生效', 'success')
+          await this.refreshOracleStatus()
+        } else {
+          this.showToast(`安装失败: ${result.error || '未知错误'}`, 'error')
+        }
+      } catch (e) {
+        this.showToast(`安装异常: ${String(e)}`, 'error')
+      }
+      this.oracleInstalling = false
     },
 
     // ===== 连接测试 =====
@@ -1398,6 +1482,9 @@ export default {
       this.connStatus = ''
       this.availableDatabases = []
       this.schema = null
+      if (this.config.db_type === 'oracle') {
+        this.refreshOracleStatus()
+      }
     },
   },
 }

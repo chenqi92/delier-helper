@@ -338,3 +338,70 @@ pub async fn llm_get_request(req: LlmGetRequest) -> LlmResponse {
         error,
     }
 }
+
+// ==================== Oracle Instant Client 管理 ====================
+
+use crate::oracle_setup;
+use tauri::Manager;
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OracleClientStatus {
+    pub installed: bool,
+    pub install_dir: String,
+    pub platform: String,
+    pub download_url: Option<String>,
+    pub supported: bool,
+}
+
+#[tauri::command]
+pub async fn oracle_client_status(app: tauri::AppHandle) -> Result<OracleClientStatus, String> {
+    let data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("获取应用数据目录失败: {}", e))?;
+    let dir = oracle_setup::install_dir(&data_dir);
+    let url = oracle_setup::download_url();
+    Ok(OracleClientStatus {
+        installed: oracle_setup::is_installed(&dir),
+        install_dir: dir.to_string_lossy().to_string(),
+        platform: oracle_setup::platform_label().to_string(),
+        download_url: url.map(|s| s.to_string()),
+        supported: url.is_some(),
+    })
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OracleClientInstallResult {
+    pub success: bool,
+    pub install_dir: String,
+    pub error: Option<String>,
+}
+
+#[tauri::command]
+pub async fn oracle_client_install(app: tauri::AppHandle) -> OracleClientInstallResult {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            return OracleClientInstallResult {
+                success: false,
+                install_dir: String::new(),
+                error: Some(format!("获取应用数据目录失败: {}", e)),
+            };
+        }
+    };
+    let dir = oracle_setup::install_dir(&data_dir);
+    match oracle_setup::install(&dir).await {
+        Ok(()) => OracleClientInstallResult {
+            success: true,
+            install_dir: dir.to_string_lossy().to_string(),
+            error: None,
+        },
+        Err(e) => OracleClientInstallResult {
+            success: false,
+            install_dir: dir.to_string_lossy().to_string(),
+            error: Some(e),
+        },
+    }
+}

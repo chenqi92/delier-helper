@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
-use sqlx::{mysql::MySqlPoolOptions, postgres::PgPoolOptions, Row};
-use sqlx::mysql::{MySqlConnectOptions, MySqlSslMode};
-use sqlx::postgres::{PgConnectOptions, PgSslMode};
+
+mod mysql;
+mod oracle;
+mod postgres;
+mod sqlserver;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct DbConfig {
-    pub db_type: String, // "mysql" | "postgres"
+    pub db_type: String, // "mysql" | "postgres" | "sqlserver" | "oracle"
     pub host: String,
     pub port: u16,
     pub username: String,
@@ -14,35 +16,8 @@ pub struct DbConfig {
 }
 
 impl DbConfig {
-    fn db_name(&self) -> &str {
+    pub fn db_name(&self) -> &str {
         self.database.as_deref().unwrap_or("")
-    }
-
-    /// 直接构建 ConnectOptions，避免 URL 解析导致密码特殊字符（@#% 等）出错
-    fn mysql_options(&self) -> MySqlConnectOptions {
-        let mut opts = MySqlConnectOptions::new()
-            .host(&self.host)
-            .port(self.port)
-            .username(&self.username)
-            .password(&self.password)
-            .ssl_mode(MySqlSslMode::Disabled); // 内网不需要 SSL，避免 TLS 握手卡死
-        let db = self.db_name();
-        if !db.is_empty() {
-            opts = opts.database(db);
-        }
-        opts
-    }
-
-    fn postgres_options(&self) -> PgConnectOptions {
-        let db = self.db_name();
-        let target = if db.is_empty() { "postgres" } else { db };
-        PgConnectOptions::new()
-            .host(&self.host)
-            .port(self.port)
-            .username(&self.username)
-            .password(&self.password)
-            .database(target)
-            .ssl_mode(PgSslMode::Disable) // 内网不需要 SSL
     }
 }
 
@@ -94,149 +69,24 @@ pub struct DbSchema {
 
 /// Test database connection AND list databases in a single connection
 pub async fn test_and_list(config: &DbConfig) -> Result<(String, Vec<String>), String> {
-    use std::io::Write;
-    let mut log = std::fs::OpenOptions::new()
-        .create(true).append(true)
-        .open("/tmp/db_debug.log")
-        .ok();
-
-    macro_rules! dblog {
-        ($($arg:tt)*) => {
-            let msg = format!($($arg)*);
-            eprintln!("{}", msg);
-            if let Some(ref mut f) = log {
-                let _ = writeln!(f, "{}", msg);
-            }
-        }
+    match config.db_type.as_str() {
+        "mysql" => mysql::test_and_list(config).await,
+        "postgres" => postgres::test_and_list(config).await,
+        "sqlserver" => sqlserver::test_and_list(config).await,
+        "oracle" => oracle::test_and_list(config).await,
+        other => Err(format!("不支持的数据库类型: {}", other)),
     }
-
-    dblog!("[DB] 开始连接 {}:{} type={} user={} pass_len={}",
-        config.host, config.port, config.db_type, config.username, config.password.len());
-
-    let start = std::time::Instant::now();
-
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
-        if config.db_type == "mysql" {
-            use sqlx::ConnectOptions;
-
-            dblog!("[DB] MySQL: 正在建立连接... (ssl=disabled)");
-            let conn_start = std::time::Instant::now();
-            let mut conn = config.mysql_options()
-                .connect()
-                .await
-                .map_err(|e| {
-                    let msg = format!("MySQL连接失败({}ms): {}", conn_start.elapsed().as_millis(), e);
-                    dblog!("[DB] {}", msg);
-                    msg
-                })?;
-
-            dblog!("[DB] 连接成功 ({}ms)，查询版本...", conn_start.elapsed().as_millis());
-            let row: (String,) = sqlx::query_as("SELECT VERSION()")
-                .fetch_one(&mut conn)
-                .await
-                .map_err(|e| format!("查询版本失败: {}", e))?;
-            let version = format!("MySQL {}", row.0);
-            dblog!("[DB] 版本={}", version);
-
-            dblog!("[DB] 查询数据库列表...");
-            let db_rows: Vec<(String,)> = sqlx::query_as(
-                "SELECT CAST(SCHEMA_NAME AS CHAR) FROM information_schema.SCHEMATA WHERE SCHEMA_NAME NOT IN ('information_schema','performance_schema','sys','mysql') ORDER BY SCHEMA_NAME"
-            )
-                .fetch_all(&mut conn)
-                .await
-                .map_err(|e| format!("查询数据库列表失败: {}", e))?;
-
-            let dbs: Vec<String> = db_rows.into_iter().map(|(name,)| name).collect();
-            dblog!("[DB] 成功! {} 个数据库, 总耗时 {}ms", dbs.len(), start.elapsed().as_millis());
-
-            drop(conn);
-            Ok((version, dbs))
-        } else if config.db_type == "postgres" {
-            use sqlx::ConnectOptions;
-
-            dblog!("[DB] PG: 正在建立连接...");
-            let mut conn = config.postgres_options()
-                .connect()
-                .await
-                .map_err(|e| format!("PG连接失败: {}", e))?;
-
-            let row: (String,) = sqlx::query_as("SELECT VERSION()")
-                .fetch_one(&mut conn)
-                .await
-                .map_err(|e| format!("查询版本失败: {}", e))?;
-
-            let db_rows = sqlx::query(
-                "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
-            )
-            .fetch_all(&mut conn)
-            .await
-            .map_err(|e| format!("查询数据库列表失败: {}", e))?;
-
-            let dbs: Vec<String> = db_rows.iter().map(|r| r.get::<String, _>("datname")).collect();
-            dblog!("[DB] PG成功! {} 个数据库", dbs.len());
-
-            drop(conn);
-            Ok((row.0, dbs))
-        } else {
-            Err(format!("不支持的数据库类型: {}", config.db_type))
-        }
-    })
-    .await
-    .map_err(|_| {
-        let msg = format!("连接超时[v3]({}ms) {}:{}@{}", start.elapsed().as_millis(), config.username, config.db_type, config.host);
-        dblog!("[DB] {}", msg);
-        msg
-    })?
 }
 
 /// Fetch list of databases
 pub async fn fetch_databases(config: &DbConfig) -> Result<Vec<String>, String> {
-    tokio::time::timeout(std::time::Duration::from_secs(8), async {
-        match config.db_type.as_str() {
-            "mysql" => {
-                let pool = MySqlPoolOptions::new()
-                    .max_connections(1)
-                    .acquire_timeout(std::time::Duration::from_secs(5))
-                    .connect_with(config.mysql_options())
-                    .await
-                    .map_err(|e| format!("MySQL 连接失败: {}", e))?;
-                let rows = sqlx::query("SHOW DATABASES")
-                    .fetch_all(&pool)
-                    .await
-                    .map_err(|e| format!("查询数据库列表失败: {}", e))?;
-                pool.close().await;
-                let mut dbs: Vec<String> = rows.iter().map(|r| r.get::<String, _>(0)).collect();
-                dbs.retain(|d| {
-                    !matches!(
-                        d.as_str(),
-                        "information_schema" | "performance_schema" | "sys"
-                    )
-                });
-                dbs.sort();
-                Ok(dbs)
-            }
-            "postgres" => {
-                let pool = PgPoolOptions::new()
-                    .max_connections(1)
-                    .acquire_timeout(std::time::Duration::from_secs(5))
-                    .connect_with(config.postgres_options())
-                    .await
-                    .map_err(|e| format!("PostgreSQL 连接失败: {}", e))?;
-                let rows = sqlx::query(
-                    "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
-                )
-                .fetch_all(&pool)
-                .await
-                .map_err(|e| format!("查询数据库列表失败: {}", e))?;
-                pool.close().await;
-                let dbs: Vec<String> = rows.iter().map(|r| r.get::<String, _>("datname")).collect();
-                Ok(dbs)
-            }
-            _ => Err(format!("不支持的数据库类型: {}", config.db_type)),
-        }
-    })
-    .await
-    .map_err(|_| "连接超时（8秒），请检查连接参数".to_string())?
+    match config.db_type.as_str() {
+        "mysql" => mysql::fetch_databases(config).await,
+        "postgres" => postgres::fetch_databases(config).await,
+        "sqlserver" => sqlserver::fetch_databases(config).await,
+        "oracle" => oracle::fetch_databases(config).await,
+        other => Err(format!("不支持的数据库类型: {}", other)),
+    }
 }
 
 /// Fetch complete database schema
@@ -245,360 +95,10 @@ pub async fn fetch_schema(config: &DbConfig) -> Result<DbSchema, String> {
         return Err("请先选择一个数据库".to_string());
     }
     match config.db_type.as_str() {
-        "mysql" => fetch_mysql_schema(config).await,
-        "postgres" => fetch_postgres_schema(config).await,
-        _ => Err(format!("不支持的数据库类型: {}", config.db_type)),
-    }
-}
-
-// ==================== MySQL ====================
-
-async fn fetch_mysql_schema(config: &DbConfig) -> Result<DbSchema, String> {
-    let pool = MySqlPoolOptions::new()
-        .max_connections(2)
-        .acquire_timeout(std::time::Duration::from_secs(15))
-        .connect_with(config.mysql_options())
-        .await
-        .map_err(|e| format!("MySQL 连接失败: {}", e))?;
-
-    let db = config.db_name();
-
-    // 1. Tables
-    let table_rows = sqlx::query(
-        "SELECT CAST(TABLE_NAME AS CHAR) AS TABLE_NAME,
-                CAST(IFNULL(TABLE_COMMENT, '') AS CHAR) AS TABLE_COMMENT,
-                TABLE_ROWS
-         FROM information_schema.TABLES
-         WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE'
-         ORDER BY TABLE_NAME",
-    )
-    .bind(db)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("查询表信息失败: {}", e))?;
-
-    let mut tables = Vec::new();
-    for row in &table_rows {
-        let name: String = row.get("TABLE_NAME");
-        let comment: String = row.get("TABLE_COMMENT");
-        let row_count: Option<i64> = row.try_get("TABLE_ROWS").ok();
-        tables.push(TableInfo {
-            name,
-            comment,
-            row_count,
-        });
-    }
-
-    // 2. Columns with primary key info
-    let col_rows = sqlx::query(
-        "SELECT CAST(c.TABLE_NAME AS CHAR) AS TABLE_NAME,
-                CAST(c.COLUMN_NAME AS CHAR) AS COLUMN_NAME,
-                CAST(c.DATA_TYPE AS CHAR) AS DATA_TYPE,
-                CAST(c.COLUMN_TYPE AS CHAR) AS COLUMN_TYPE,
-                CAST(c.IS_NULLABLE AS CHAR) AS IS_NULLABLE,
-                CAST(c.COLUMN_DEFAULT AS CHAR) AS COLUMN_DEFAULT,
-                CAST(IFNULL(c.COLUMN_COMMENT, '') AS CHAR) AS COLUMN_COMMENT,
-                c.ORDINAL_POSITION,
-                IF(kcu.COLUMN_NAME IS NOT NULL, 1, 0) AS IS_PK
-         FROM information_schema.COLUMNS c
-         LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu
-           ON kcu.TABLE_SCHEMA = c.TABLE_SCHEMA
-           AND kcu.TABLE_NAME = c.TABLE_NAME
-           AND kcu.COLUMN_NAME = c.COLUMN_NAME
-           AND kcu.CONSTRAINT_NAME = 'PRIMARY'
-         WHERE c.TABLE_SCHEMA = ?
-         ORDER BY c.TABLE_NAME, c.ORDINAL_POSITION",
-    )
-    .bind(db)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("查询列信息失败: {}", e))?;
-
-    let mut columns = Vec::new();
-    for row in &col_rows {
-        let table_name: String = row.get("TABLE_NAME");
-        let name: String = row.get("COLUMN_NAME");
-        let data_type: String = row.get("DATA_TYPE");
-        let full_type: String = row.get("COLUMN_TYPE");
-        let nullable_str: String = row.get("IS_NULLABLE");
-        let is_nullable = nullable_str == "YES";
-        let default_value: Option<String> = row.get("COLUMN_DEFAULT");
-        let comment: String = row.get("COLUMN_COMMENT");
-        let is_pk: i32 = row.get("IS_PK");
-        let ordinal: u32 = row.get("ORDINAL_POSITION");
-
-        columns.push(ColumnInfo {
-            table_name,
-            name,
-            data_type,
-            full_type,
-            is_nullable,
-            default_value,
-            comment,
-            is_primary_key: is_pk == 1,
-            ordinal_position: ordinal as i32,
-        });
-    }
-
-    // 3. Foreign keys
-    let fk_rows = sqlx::query(
-        "SELECT CAST(CONSTRAINT_NAME AS CHAR) AS CONSTRAINT_NAME,
-                CAST(TABLE_NAME AS CHAR) AS TABLE_NAME,
-                CAST(COLUMN_NAME AS CHAR) AS COLUMN_NAME,
-                CAST(REFERENCED_TABLE_NAME AS CHAR) AS REFERENCED_TABLE_NAME,
-                CAST(REFERENCED_COLUMN_NAME AS CHAR) AS REFERENCED_COLUMN_NAME
-         FROM information_schema.KEY_COLUMN_USAGE
-         WHERE TABLE_SCHEMA = ? AND REFERENCED_TABLE_NAME IS NOT NULL
-         ORDER BY TABLE_NAME, CONSTRAINT_NAME",
-    )
-    .bind(db)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("查询外键失败: {}", e))?;
-
-    let mut foreign_keys = Vec::new();
-    for row in &fk_rows {
-        foreign_keys.push(ForeignKeyInfo {
-            name: row.get("CONSTRAINT_NAME"),
-            table_name: row.get("TABLE_NAME"),
-            column_name: row.get("COLUMN_NAME"),
-            ref_table: row.get("REFERENCED_TABLE_NAME"),
-            ref_column: row.get("REFERENCED_COLUMN_NAME"),
-        });
-    }
-
-    // 4. Indexes
-    let idx_rows = sqlx::query(
-        "SELECT CAST(TABLE_NAME AS CHAR) AS TABLE_NAME,
-                CAST(INDEX_NAME AS CHAR) AS INDEX_NAME,
-                CAST(COLUMN_NAME AS CHAR) AS COLUMN_NAME,
-                NON_UNIQUE, SEQ_IN_INDEX
-         FROM information_schema.STATISTICS
-         WHERE TABLE_SCHEMA = ?
-         ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX",
-    )
-    .bind(db)
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("查询索引失败: {}", e))?;
-
-    let mut indexes: Vec<IndexInfo> = Vec::new();
-    for row in &idx_rows {
-        let table_name: String = row.get("TABLE_NAME");
-        let index_name: String = row.get("INDEX_NAME");
-        let column_name: String = row.get("COLUMN_NAME");
-        let non_unique: i32 = row.get("NON_UNIQUE");
-        let is_primary = index_name == "PRIMARY";
-
-        if let Some(idx) = indexes
-            .iter_mut()
-            .find(|i| i.table_name == table_name && i.index_name == index_name)
-        {
-            idx.columns.push(column_name);
-        } else {
-            indexes.push(IndexInfo {
-                table_name,
-                index_name,
-                columns: vec![column_name],
-                is_unique: non_unique == 0,
-                is_primary,
-            });
-        }
-    }
-
-    pool.close().await;
-
-    Ok(DbSchema {
-        tables,
-        columns,
-        foreign_keys,
-        indexes,
-    })
-}
-
-// ==================== PostgreSQL ====================
-
-async fn fetch_postgres_schema(config: &DbConfig) -> Result<DbSchema, String> {
-    let pool = PgPoolOptions::new()
-        .max_connections(2)
-        .acquire_timeout(std::time::Duration::from_secs(15))
-        .connect_with(config.postgres_options())
-        .await
-        .map_err(|e| format!("PostgreSQL 连接失败: {}", e))?;
-
-    // 1. Tables
-    let table_rows = sqlx::query(
-        "SELECT c.relname AS table_name,
-                COALESCE(d.description, '') AS table_comment,
-                c.reltuples::bigint AS row_count
-         FROM pg_class c
-         JOIN pg_namespace n ON n.oid = c.relnamespace
-         LEFT JOIN pg_description d ON d.objoid = c.oid AND d.objsubid = 0
-         WHERE n.nspname = 'public' AND c.relkind = 'r'
-         ORDER BY c.relname",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("查询表信息失败: {}", e))?;
-
-    let mut tables = Vec::new();
-    for row in &table_rows {
-        let name: String = row.get("table_name");
-        let comment: String = row.get("table_comment");
-        let row_count: Option<i64> = row.try_get("row_count").ok();
-        tables.push(TableInfo {
-            name,
-            comment,
-            row_count,
-        });
-    }
-
-    // 2. Columns
-    let col_rows = sqlx::query(
-        "SELECT c.table_name, c.column_name, c.data_type, c.udt_name,
-                c.is_nullable, c.column_default,
-                COALESCE(pgd.description, '') AS column_comment,
-                c.ordinal_position::int AS ordinal_position,
-                CASE WHEN tc.constraint_type = 'PRIMARY KEY' THEN true ELSE false END AS is_pk
-         FROM information_schema.columns c
-         LEFT JOIN pg_catalog.pg_statio_all_tables st
-           ON st.schemaname = c.table_schema AND st.relname = c.table_name
-         LEFT JOIN pg_catalog.pg_description pgd
-           ON pgd.objoid = st.relid AND pgd.objsubid = c.ordinal_position
-         LEFT JOIN information_schema.key_column_usage kcu
-           ON kcu.table_schema = c.table_schema
-           AND kcu.table_name = c.table_name
-           AND kcu.column_name = c.column_name
-         LEFT JOIN information_schema.table_constraints tc
-           ON tc.constraint_name = kcu.constraint_name
-           AND tc.table_schema = kcu.table_schema
-           AND tc.constraint_type = 'PRIMARY KEY'
-         WHERE c.table_schema = 'public'
-         ORDER BY c.table_name, c.ordinal_position",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("查询列信息失败: {}", e))?;
-
-    let mut columns = Vec::new();
-    for row in &col_rows {
-        let table_name: String = row.get("table_name");
-        let name: String = row.get("column_name");
-        let data_type: String = row.get("data_type");
-        let udt_name: String = row.get("udt_name");
-        let nullable_str: String = row.get("is_nullable");
-        let is_nullable = nullable_str == "YES";
-        let default_value: Option<String> = row.get("column_default");
-        let comment: String = row.get("column_comment");
-        let is_pk: bool = row.get("is_pk");
-        let ordinal: i32 = row.get("ordinal_position");
-
-        columns.push(ColumnInfo {
-            table_name,
-            name,
-            data_type: data_type.clone(),
-            full_type: format_pg_type(&data_type, &udt_name),
-            is_nullable,
-            default_value,
-            comment,
-            is_primary_key: is_pk,
-            ordinal_position: ordinal,
-        });
-    }
-
-    // 3. Foreign keys
-    let fk_rows = sqlx::query(
-        "SELECT tc.constraint_name,
-                kcu.table_name,
-                kcu.column_name,
-                ccu.table_name AS ref_table,
-                ccu.column_name AS ref_column
-         FROM information_schema.table_constraints tc
-         JOIN information_schema.key_column_usage kcu
-           ON tc.constraint_name = kcu.constraint_name
-           AND tc.table_schema = kcu.table_schema
-         JOIN information_schema.constraint_column_usage ccu
-           ON ccu.constraint_name = tc.constraint_name
-           AND ccu.table_schema = tc.table_schema
-         WHERE tc.constraint_type = 'FOREIGN KEY'
-           AND tc.table_schema = 'public'
-         ORDER BY kcu.table_name, tc.constraint_name",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("查询外键失败: {}", e))?;
-
-    let mut foreign_keys = Vec::new();
-    for row in &fk_rows {
-        foreign_keys.push(ForeignKeyInfo {
-            name: row.get("constraint_name"),
-            table_name: row.get("table_name"),
-            column_name: row.get("column_name"),
-            ref_table: row.get("ref_table"),
-            ref_column: row.get("ref_column"),
-        });
-    }
-
-    // 4. Indexes
-    let idx_rows = sqlx::query(
-        "SELECT t.relname AS table_name,
-                i.relname AS index_name,
-                a.attname AS column_name,
-                ix.indisunique AS is_unique,
-                ix.indisprimary AS is_primary,
-                array_position(ix.indkey, a.attnum) AS col_pos
-         FROM pg_index ix
-         JOIN pg_class t ON t.oid = ix.indrelid
-         JOIN pg_class i ON i.oid = ix.indexrelid
-         JOIN pg_namespace n ON n.oid = t.relnamespace
-         JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
-         WHERE n.nspname = 'public'
-         ORDER BY t.relname, i.relname, col_pos",
-    )
-    .fetch_all(&pool)
-    .await
-    .map_err(|e| format!("查询索引失败: {}", e))?;
-
-    let mut indexes: Vec<IndexInfo> = Vec::new();
-    for row in &idx_rows {
-        let table_name: String = row.get("table_name");
-        let index_name: String = row.get("index_name");
-        let column_name: String = row.get("column_name");
-        let is_unique: bool = row.get("is_unique");
-        let is_primary: bool = row.get("is_primary");
-
-        if let Some(idx) = indexes
-            .iter_mut()
-            .find(|i| i.table_name == table_name && i.index_name == index_name)
-        {
-            idx.columns.push(column_name);
-        } else {
-            indexes.push(IndexInfo {
-                table_name,
-                index_name,
-                columns: vec![column_name],
-                is_unique,
-                is_primary,
-            });
-        }
-    }
-
-    pool.close().await;
-
-    Ok(DbSchema {
-        tables,
-        columns,
-        foreign_keys,
-        indexes,
-    })
-}
-
-fn format_pg_type(data_type: &str, udt_name: &str) -> String {
-    match data_type {
-        "character varying" => format!("varchar({})", udt_name.replace("varchar", "")),
-        "character" => format!("char({})", udt_name.replace("bpchar", "")),
-        "USER-DEFINED" => udt_name.to_string(),
-        "ARRAY" => format!("{}[]", udt_name.trim_start_matches('_')),
-        _ => data_type.to_string(),
+        "mysql" => mysql::fetch_schema(config).await,
+        "postgres" => postgres::fetch_schema(config).await,
+        "sqlserver" => sqlserver::fetch_schema(config).await,
+        "oracle" => oracle::fetch_schema(config).await,
+        other => Err(format!("不支持的数据库类型: {}", other)),
     }
 }

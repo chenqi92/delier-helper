@@ -1,5 +1,6 @@
 mod commands;
 mod db_connector;
+mod oracle_setup;
 mod scanner;
 mod ssh_connector;
 
@@ -28,6 +29,8 @@ pub fn run() {
             commands::db_fetch_databases,
             commands::llm_request,
             commands::llm_get_request,
+            commands::oracle_client_status,
+            commands::oracle_client_install,
             ssh_connector::ssh_test_connection,
             ssh_connector::ssh_read_server_info,
         ])
@@ -35,6 +38,12 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
+
+            // 启动时尝试把已下载的 Oracle Instant Client 加入动态库搜索路径
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                let dir = oracle_setup::install_dir(&data_dir);
+                oracle_setup::configure_loading_path(&dir);
+            }
 
             if let Some(window) = app.get_webview_window("main") {
                 let icon_bytes = include_bytes!("../icons/icon.png");
