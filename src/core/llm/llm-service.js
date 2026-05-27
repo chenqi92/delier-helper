@@ -131,16 +131,16 @@ export const LLM_PROVIDERS = [
         label: '小米 MiMo',
         baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
         apiKeyPlaceholder: 'tp-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
-        note: '⚠ API Key 必须以 tp- 开头，从控制台复制时不要丢前缀（否则报 401 Invalid API Key）。兼容 OpenAI；Anthropic 兼容路径为 /anthropic。',
+        note: '⚠ API Key 必须以 tp- 开头，从控制台复制时不要丢前缀（否则报 401 Invalid API Key）。模型 ID 是小写格式，控制台展示的 CamelCase 仅作显示。兼容 OpenAI；Anthropic 兼容路径为 /anthropic。',
         models: [
-            { id: 'MiMo-V2.5-Pro', label: 'MiMo V2.5 Pro', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 131072 },
-            { id: 'MiMo-V2.5', label: 'MiMo V2.5', capabilities: { multimodal: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 131072 },
-            { id: 'MiMo-V2-Pro', label: 'MiMo V2 Pro', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true }, contextLength: 131072 },
-            { id: 'MiMo-V2-Omni', label: 'MiMo V2 Omni', capabilities: { multimodal: true, codeGen: true, functionCall: true }, contextLength: 131072 },
-            { id: 'MiMo-V2.5-TTS', label: 'MiMo V2.5 TTS', capabilities: {}, contextLength: 8192 },
-            { id: 'MiMo-V2.5-TTS-VoiceClone', label: 'MiMo V2.5 TTS 声音克隆', capabilities: {}, contextLength: 8192 },
-            { id: 'MiMo-V2.5-TTS-VoiceDesign', label: 'MiMo V2.5 TTS 声音设计', capabilities: {}, contextLength: 8192 },
-            { id: 'MiMo-V2-TTS', label: 'MiMo V2 TTS', capabilities: {}, contextLength: 8192 },
+            { id: 'mimo-v2.5-pro', label: 'MiMo V2.5 Pro', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 131072 },
+            { id: 'mimo-v2.5', label: 'MiMo V2.5', capabilities: { multimodal: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 131072 },
+            { id: 'mimo-v2-pro', label: 'MiMo V2 Pro', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 131072 },
+            { id: 'mimo-v2-omni', label: 'MiMo V2 Omni', capabilities: { multimodal: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 131072 },
+            { id: 'mimo-v2.5-tts', label: 'MiMo V2.5 TTS', capabilities: {}, contextLength: 8192 },
+            { id: 'mimo-v2.5-tts-voiceclone', label: 'MiMo V2.5 TTS 声音克隆', capabilities: {}, contextLength: 8192 },
+            { id: 'mimo-v2.5-tts-voicedesign', label: 'MiMo V2.5 TTS 声音设计', capabilities: {}, contextLength: 8192 },
+            { id: 'mimo-v2-tts', label: 'MiMo V2 TTS', capabilities: {}, contextLength: 8192 },
         ],
     },
     {
@@ -398,8 +398,17 @@ export function getDefaultModels(providerId) {
 function inferCapabilitiesFromId(modelId, caps = {}) {
     const lower = (modelId || '').toLowerCase()
 
+    // TTS 类模型只做语音合成，不参与 chat completion 推理，能力标签留空
+    if (/tts|voiceclone|voicedesign|voice-clone|voice-design/.test(lower)) {
+        return caps
+    }
+
     // ===== 深度思考 =====
     if (/\b(r1|o[134]|qwq|thinking|reasoner|reason)\b/.test(lower)) {
+        caps.deepThinking = true
+    }
+    // MiMo Pro 系列含深度思考
+    if (/mimo.*-pro/.test(lower)) {
         caps.deepThinking = true
     }
 
@@ -411,15 +420,32 @@ function inferCapabilitiesFromId(modelId, caps = {}) {
     if (/\b(gpt-[45]|claude|gemini-2|deepseek-(v3|chat)|qwen3?-\d+b)\b/.test(lower)) {
         caps.codeGen = true
     }
+    // Llama 3.1/3.2/3.3、Nemotron、Mistral Large、MiMo 等也具备较强代码能力
+    if (/llama-?3\.[123]|nemotron|mistral-large|mistral-nemo|mimo-v2/.test(lower)) {
+        caps.codeGen = true
+    }
 
     // ===== 多模态 =====
-    if (/\b(vision|vl|visual|mm|multimodal|image|pixtral|llava|minicpm-v)\b/.test(lower)) {
+    if (/\b(vision|vl|visual|mm|multimodal|image|pixtral|llava|minicpm-v|omni)\b/.test(lower)) {
+        caps.multimodal = true
+    }
+    // MiMo Pro / Omni 多模态
+    if (/mimo-v2(\.5)?(-pro|-omni)?(\b|$)/.test(lower) && !/tts/.test(lower)) {
         caps.multimodal = true
     }
 
     // ===== 函数调用 =====
     if (/\b(gpt-[345]|claude|gemini|qwen[23]|mistral-large|command-r)\b/.test(lower) && !caps.deepThinking) {
         caps.functionCall = true
+    }
+    // Llama 3.1+ / Nemotron / MiMo 支持 function calling
+    if (/llama-?3\.[123]|nemotron|mimo-v2/.test(lower) && !/tts/.test(lower)) {
+        caps.functionCall = true
+    }
+
+    // ===== 长上下文（128K+ 模型默认带标记） =====
+    if (/llama-?3\.[123]|nemotron|mimo-v2|qwen2\.5|deepseek-(r1|v3|chat)|mistral-large-2|phi-3\.5/.test(lower)) {
+        caps.longContext = true
     }
 
     return caps
@@ -458,6 +484,10 @@ function inferContextLengthFromId(modelId) {
     if (/doubao.*(pro|seed|1-5|1-6|128k)/.test(id)) return 131072
     if (/spark-pro|spark.*ultra|4\.0ultra/.test(id)) return 131072
     if (/baichuan.*128k|baichuan4/.test(id)) return 131072
+    // MiMo V2 / V2.5 (非 TTS) → 128K
+    if (/^mimo-v2/.test(id) && !/tts/.test(id)) return 131072
+    // MiMo TTS → 8K（语音合成上下文较短）
+    if (/^mimo-.*tts/.test(id)) return 8192
 
     // ===== 64K 级别 =====
     if (/deepseek.*coder/.test(id)) return 65536
