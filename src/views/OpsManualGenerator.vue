@@ -221,7 +221,14 @@ import { createOpsTemplate, getOpsPresets } from '../core/doc-template/ops-templ
 import { getEnabledLeafSections, countSections, findSectionById, renumberSections } from '../core/doc-template/srs-template.js'
 import { scanCodebase, buildContextSummary } from '../core/doc-template/codebase-scanner.js'
 import { buildOpsContextSummary, buildOpsSectionPrompt, fillDocSections, createAiController } from '../core/doc-template/ops-llm-service.js'
-import { applyDocSectionResult } from '../core/doc-template/doc-llm-service.js'
+import { applyDocSectionResult, evaluateSectionQuality } from '../core/doc-template/doc-llm-service.js'
+
+const OPS_TEMPERATURE_BY_TYPE = { diagram: 0.1, table: 0.35, text: 0.55 }
+function summarizeForOpsContext(section, maxChars = 180) {
+  const text = section.type === 'diagram' ? `[Mermaid: ${(section.mermaidCode || '').split('\n')[0]}]` : (section.content || '')
+  const cleaned = text.replace(/\s+/g, ' ').trim()
+  return cleaned.length > maxChars ? cleaned.slice(0, maxChars) + '…' : cleaned
+}
 import { renderDocSections } from '../core/doc-template/doc-docx-renderer.js'
 import { renderSectionsToMarkdown } from '../core/doc-template/ops-md-renderer.js'
 import { getResolvedConfig, callLlm } from '../core/llm/llm-service.js'
@@ -455,6 +462,7 @@ export default {
       try {
         const contextSummary = buildOpsContextSummary(this.scanResult, this.serverInfos, this.docInfo, this.referenceFiles)
         const leafSections = getEnabledLeafSections(this.sections)
+        const previousSummaries = []
 
         // 使用运维手册专用 prompt 构建器的自定义 fillDocSections
         for (let i = 0; i < leafSections.length; i++) {
@@ -467,19 +475,27 @@ export default {
           const section = leafSections[i]
           section.generating = true
           section.error = null
+          section.warnings = []
           this.aiProgressText = `[${i + 1}/${leafSections.length}] ${section.number} ${section.title}`
           this.addLog(`[进行] ${this.aiProgressText}`)
 
           try {
-            const messages = buildOpsSectionPrompt(section, contextSummary, this.docInfo)
+            const messages = buildOpsSectionPrompt(section, contextSummary, this.docInfo, previousSummaries.slice(-10))
             const defaultMaxTokens = section.type === 'diagram' ? 4096 : 16384
             const maxTokens = config.maxOutputTokens || defaultMaxTokens
-            const responseText = await callLlm(config, messages, { maxTokens, temperature: 0.4, signal: this.aiController?.signal })
+            const temperature = OPS_TEMPERATURE_BY_TYPE[section.type] ?? 0.5
+            const responseText = await callLlm(config, messages, { maxTokens, temperature, jsonMode: false, signal: this.aiController?.signal })
             applyDocSectionResult(responseText, section)
             section.generating = false
             section.error = null
+            const warnings = evaluateSectionQuality(section, previousSummaries)
+            previousSummaries.push({ number: section.number, title: section.title, excerpt: summarizeForOpsContext(section) })
             this.sections = [...this.sections]
-            this.addLog(`[完成] ${section.number} ${section.title} ✓`, 'success')
+            if (warnings.length > 0) {
+              this.addLog(`[完成] ${section.number} ${section.title} ⚠ ${warnings.join('；')}`, 'warn')
+            } else {
+              this.addLog(`[完成] ${section.number} ${section.title} ✓`, 'success')
+            }
           } catch (e) {
             section.generating = false
             if (e.name === 'AbortError') break
@@ -519,12 +535,18 @@ export default {
         const messages = buildOpsSectionPrompt(section, contextSummary, this.docInfo)
         const defaultMaxTokens = section.type === 'diagram' ? 4096 : 16384
         const maxTokens = config.maxOutputTokens || defaultMaxTokens
-        const responseText = await callLlm(config, messages, { maxTokens, temperature: 0.4 })
+        const temperature = OPS_TEMPERATURE_BY_TYPE[section.type] ?? 0.5
+        const responseText = await callLlm(config, messages, { maxTokens, temperature, jsonMode: false })
         applyDocSectionResult(responseText, section)
         section.generating = false
         section.error = null
+        const warnings = evaluateSectionQuality(section)
         this.sections = [...this.sections]
-        this.addLog(`[完成] ${section.number} ${section.title} ✓`, 'success')
+        if (warnings.length > 0) {
+          this.addLog(`[完成] ${section.number} ${section.title} ⚠ ${warnings.join('；')}`, 'warn')
+        } else {
+          this.addLog(`[完成] ${section.number} ${section.title} ✓`, 'success')
+        }
         this.showToast(`${section.number} ${section.title} 生成完成`, 'success')
       } catch (e) {
         section.generating = false

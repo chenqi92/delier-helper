@@ -710,20 +710,48 @@ export function generateConfigName(config) {
 
 // ==================== LLM API 调用 ====================
 
+const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
+const MAX_RETRIES = 2 // 加上首次共最多 3 次
+const RETRY_BACKOFF_MS = [800, 2000, 4500]
+
+function isContextLimitError(body, status) {
+    if (status !== 400 && status !== 413) return false
+    const text = (body || '').toLowerCase()
+    return /context length|context_length_exceeded|maximum context|too many tokens|reduce.*messages|input is too long|max_input_tokens|prompt is too long/.test(text)
+}
+
+function friendlyContextLimitMessage(body) {
+    return [
+        '上下文超出模型限制。可尝试：',
+        '1) 在「AI 设置」选用更长上下文的模型（Claude 4.7、Gemini 2.5、GLM-4-Long、Qwen-Long 等）',
+        '2) 缩小代码库扫描范围或文档生成的章节粒度',
+        '3) 减少 system prompt 中的代码摘要长度',
+        '',
+        `原始错误片段：${(body || '').slice(0, 300)}`,
+    ].join('\n')
+}
+
 /**
  * 调用 LLM chat completions API
  * 通过 Rust 后端 invoke 发起请求，绕过前端 fetch 的 header 限制
  * @param {object} config - { baseUrl, apiKey, model, providerId }
  * @param {Array} messages - 消息数组
- * @param {object} options - { temperature, maxTokens, signal }
+ * @param {object} options - { temperature, maxTokens, signal, returnMeta, jsonMode }
+ *   - returnMeta=true 时返回 { content, usage, model }，否则只返回 content 字符串（保持兼容）
+ *   - jsonMode=false 时强制不发送 response_format（用于纯文本输出场景）
  */
 export async function callLlm(config, messages, options = {}) {
     const { baseUrl, apiKey, model, providerId } = config
-    const { temperature = 0.3, maxTokens = 4096, signal } = options
+    const {
+        temperature = 0.3,
+        maxTokens = 4096,
+        signal,
+        returnMeta = false,
+        jsonMode = true,
+    } = options
 
     const base = baseUrl.replace(/\/+$/, '')
     const isGemini = providerId === 'gemini' || base.includes('generativelanguage.googleapis.com')
-
     const url = `${base}/chat/completions`
 
     const reqBody = {
@@ -735,34 +763,50 @@ export async function callLlm(config, messages, options = {}) {
 
     // response_format 仅云端厂商支持，本地部署（Ollama/LM Studio/vLLM）和 Gemini 不支持
     const localIds = ['ollama', 'lmstudio', 'vllm', 'custom']
-    const skipJsonFormat = isGemini || localIds.includes(providerId) || !apiKey
+    const skipJsonFormat = !jsonMode || isGemini || localIds.includes(providerId) || !apiKey
     if (!skipJsonFormat) {
         reqBody.response_format = { type: 'json_object' }
     }
 
-    // 通过 Rust 后端发起请求（camelCase 字段名匹配 serde rename_all）
-    const invokePromise = invoke('llm_request', {
-        req: {
-            url,
-            apiKey,
-            body: JSON.stringify(reqBody),
-            isGemini,
-        }
-    })
-
-    // 支持取消：使用 Promise.race 与 abort 信号竞争
     let result
-    if (signal) {
-        const abortPromise = new Promise((_, reject) => {
-            if (signal.aborted) reject(new DOMException('操作已取消', 'AbortError'))
-            signal.addEventListener('abort', () => reject(new DOMException('操作已取消', 'AbortError')), { once: true })
-        })
-        result = await Promise.race([invokePromise, abortPromise])
-    } else {
-        result = await invokePromise
-    }
+    let lastErr
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        if (signal?.aborted) throw new DOMException('操作已取消', 'AbortError')
 
-    if (!result.success) {
+        const invokePromise = invoke('llm_request', {
+            req: { url, apiKey, body: JSON.stringify(reqBody), isGemini },
+        })
+
+        try {
+            if (signal) {
+                const abortPromise = new Promise((_, reject) => {
+                    signal.addEventListener('abort', () => reject(new DOMException('操作已取消', 'AbortError')), { once: true })
+                })
+                result = await Promise.race([invokePromise, abortPromise])
+            } else {
+                result = await invokePromise
+            }
+        } catch (e) {
+            if (e?.name === 'AbortError') throw e
+            lastErr = e
+            if (attempt < MAX_RETRIES) {
+                await sleep(RETRY_BACKOFF_MS[attempt])
+                continue
+            }
+            throw new Error(`LLM 调用失败（重试 ${MAX_RETRIES} 次后仍失败）: ${e?.message || e}`)
+        }
+
+        if (result.success) break
+
+        // 上下文超限：不重试，给出友好提示
+        if (isContextLimitError(result.body, result.status)) {
+            throw new Error(friendlyContextLimitMessage(result.body))
+        }
+        // 可重试的错误
+        if (RETRY_STATUS.has(result.status) && attempt < MAX_RETRIES) {
+            await sleep(RETRY_BACKOFF_MS[attempt])
+            continue
+        }
         throw new Error(result.error || `LLM API 错误 (${result.status})`)
     }
 
@@ -783,21 +827,16 @@ export async function callLlm(config, messages, options = {}) {
     }
 
     const msg = data.choices[0].message || {}
-    // 部分模型 (Gemini Pro) 可能返回 content 为 null（使用了 thinking/reasoning 模式）
-    // 尝试多种字段获取内容
     let content = msg.content
-        || msg.reasoning_content  // DeepSeek R1 等
-        || msg.text               // 某些兼容端点
+        || msg.reasoning_content
+        || msg.text
         || null
 
     if (!content) {
-        // 最后尝试从原始 body 中提取可用文本
         console.warn('LLM content 为空, 完整响应:', result.body.substring(0, 500))
         throw new Error('LLM 返回了空内容，该模型可能不完全兼容 OpenAI Chat API。建议换用 gemini-2.5-flash')
     }
 
-    // 当设置了 response_format: json_object 时，模型可能将内容包裹为 {"content": "..."} 的 JSON
-    // 自动检测并提取内部文本
     if (typeof content === 'string' && content.trimStart().startsWith('{')) {
         try {
             const parsed = JSON.parse(content)
@@ -809,7 +848,36 @@ export async function callLlm(config, messages, options = {}) {
         }
     }
 
+    // 上报 token 用量（监听 'llm-usage' 事件的 UI 可累计统计）
+    const usage = data.usage || {}
+    const promptTokens = usage.prompt_tokens || usage.input_tokens || 0
+    const completionTokens = usage.completion_tokens || usage.output_tokens || 0
+    const totalTokens = usage.total_tokens || (promptTokens + completionTokens)
+    if (typeof window !== 'undefined' && (promptTokens || completionTokens)) {
+        window.dispatchEvent(new CustomEvent('llm-usage', {
+            detail: {
+                providerId,
+                model: data.model || model,
+                promptTokens,
+                completionTokens,
+                totalTokens,
+                timestamp: Date.now(),
+            },
+        }))
+    }
+
+    if (returnMeta) {
+        return {
+            content,
+            usage: { promptTokens, completionTokens, totalTokens },
+            model: data.model || model,
+        }
+    }
     return content
+}
+
+function sleep(ms) {
+    return new Promise(r => setTimeout(r, ms))
 }
 
 /**
@@ -942,20 +1010,42 @@ export function buildApiDocPrompt(placeholders) {
         return desc
     })
 
-    return [
-        {
-            role: 'system',
-            content: `你是一个专业的后端API文档工程师。用户会提供一组需要补充说明的接口/参数/字段信息，你需要根据上下文（接口路径、方法名、参数名、类型等）推断出专业、简洁的中文描述。
+    const systemMsg = `你为一份正式的后端接口文档推断接口/参数/字段的中文描述。读者是前端开发与对接方，需要看一眼描述就能正确调用接口。
 
-输出要求：
-1. 返回标准 JSON 格式：{"results": [{"key": "...", "value": "推断的描述"}, ...]}
-2. 描述应简洁专业，通常 5-20 个汉字
-3. 根据命名惯例推断含义，例如 createTime → 创建时间，userId → 用户ID
-4. 不要包含任何额外解释，只返回 JSON`
-        },
+输出形式：
+- 仅输出 JSON：{"results":[{"key":"<原样回传>","value":"<中文描述>"}, ...]}
+- 接口名称（api_summary）：动宾结构 4-12 字，如 "查询用户列表"、"创建订单"、"删除指定文件"，避免"接口"二字
+- 接口描述（api_description）：8-30 字，说明业务行为与边界条件，如 "按分页查询当前租户下的活跃用户"
+- 参数描述（param_description）：5-20 字，标明取值含义；分页字段、排序字段、过滤字段要点明用途
+- 字段描述（request/response field）：5-20 字，名词性短语；状态/类型字段要点出可选值含义（如 "订单状态：1待付款 2已付款 3已发货"）
+- HTTP 方法语义提示：GET=查询/列表/详情，POST=创建/提交/触发，PUT/PATCH=更新，DELETE=删除
+- 路径段语义：/list 或 /page → 列表/分页；/detail 或 /{id} → 详情；/export → 导出；/import → 导入；/batch → 批量
+- 名称中含 token / signature / secret / pwd / sk → 描述里点明"敏感"
+- 不要写"待补充"、"未知"、"详见代码"等占位文本`
+
+    const fewShot = [
         {
             role: 'user',
-            content: `请为以下 ${placeholders.length} 个占位符推断描述：\n\n${entries.join('\n')}`
+            content: `请为以下 5 个占位符推断描述：
+
+#1 [api_summary] key="a1" | GET /api/v1/users/page
+#2 [api_description] key="a2" | GET /api/v1/users/page | 接口摘要: 查询用户列表
+#3 [param_description] key="p1" | GET /api/v1/users/page | 参数: pageSize (Integer)
+#4 [request_field_description] key="f1" | POST /api/v1/orders | 字段: payAmount (BigDecimal)
+#5 [response_field_description] key="f2" | GET /api/v1/orders/{id} | 字段: status (Integer)`,
+        },
+        {
+            role: 'assistant',
+            content: `{"results":[{"key":"a1","value":"分页查询用户列表"},{"key":"a2","value":"按分页参数查询用户列表，支持关键字与状态过滤"},{"key":"p1","value":"每页条数，默认 10"},{"key":"f1","value":"支付金额，保留两位小数"},{"key":"f2","value":"订单状态：1待付款 2已付款 3已发货 4已完成 5已取消"}]}`,
+        },
+    ]
+
+    return [
+        { role: 'system', content: systemMsg },
+        ...fewShot,
+        {
+            role: 'user',
+            content: `请为以下 ${placeholders.length} 个占位符推断描述：\n\n${entries.join('\n')}`,
         },
     ]
 }
@@ -1015,23 +1105,53 @@ function buildApiExamplePrompt(exampleItems) {
         return `#${i + 1} key="${item.key}" | ${item.method} ${item.path} | ${item.summary}\n字段:\n${fieldsDesc}`
     })
 
-    return [
-        {
-            role: 'system',
-            content: `你是一个专业的后端API文档工程师。用户会提供接口的字段信息，你需要根据接口的功能、路径、字段名称和类型，生成真实可信的 JSON 示例值。
+    const systemMsg = `你为后端接口文档生成真实可信的请求/响应 JSON 示例。读者拿到示例后能直接复制到 Postman 调试。
 
-要求：
-1. 返回 JSON：{"results": [{"key": "...", "value": {示例JSON对象}}, ...]}
-2. value 是一个完整的 JSON 对象（不是字符串），字段名和类型必须与提供的字段一致
-3. String 类型填充真实可信的示例值（如姓名用"张三"、邮箱用"zhangsan@example.com"、日期用"2026-01-15 10:30:00"）
-4. 数字类型填充合理的示例值（如 id 用 1001、金额用 99.50、年龄用 28）
-5. Boolean 填 true 或 false
-6. 如果字段是数组类型，返回包含 1-2 个元素的数组
-7. 不要包含任何额外解释，只返回 JSON`
-        },
+输出形式：
+- 仅输出 JSON：{"results":[{"key":"<原样回传>","value":<JSON 对象，不是字符串>}, ...]}
+- value 的字段必须与提供的字段一一对应，类型严格匹配
+
+字段值规则：
+- String：按字段语义填充常用值。姓名→"张三"/"李四"；邮箱→"zhangsan@example.com"；手机→"13800138000"；身份证→"110101199001011234"；URL→"https://example.com/path"；地址→"北京市朝阳区建国路 88 号"；备注/描述→简短中文一句话
+- 时间字段（命名含 time/date/at/timestamp）：String 类型用 "2026-05-27 10:30:00"；Long 类型用毫秒时间戳 1748340600000；Date/LocalDateTime 类型用 ISO "2026-05-27T10:30:00"
+- 数字 id 字段：1001 起递增；外键 id 用 2001、3001 与主键拉开区分
+- 金额（命名含 amount/money/price/fee/cost）：99.50 / 1280.00 / 6800.00 一类合理金额，保留两位小数
+- 状态字段（命名含 status/state/type）：从注释里的可选值取首个有效值；没有注释就填 1
+- Boolean：默认 true（除非语义明显是反例，如 isDeleted 默认 false）
+- 数组：返回 1-2 个元素的数组；分页响应里 list/records/rows 字段返回 2 个元素
+- 嵌套对象：递归按上述规则填充
+- 分页响应字段（total/pageNum/pageSize/pages）：total=25、pageNum=1、pageSize=10、pages=3
+- 统一响应包装（命名是 code/msg/data/success）：成功响应 code=200、msg="success"、success=true，data 是真正的业务数据
+
+不要写 "string"、"待填"、"xxx" 这类占位值。不要输出解释，只输出 JSON。`
+
+    const fewShot = [
         {
             role: 'user',
-            content: `请为以下 ${exampleItems.length} 个接口生成真实可信的示例 JSON：\n\n${entries.join('\n\n')}`
+            content: `请为以下 1 个接口生成真实可信的示例 JSON：
+
+#1 key="ex1" | GET /api/v1/users/{id} | 查询用户详情
+字段:
+  - id: Long
+  - userName: String (说明: 用户名)
+  - email: String
+  - status: Integer (说明: 状态：1启用 2禁用)
+  - createTime: String
+  - balance: BigDecimal
+  - tags: List<String>`,
+        },
+        {
+            role: 'assistant',
+            content: `{"results":[{"key":"ex1","value":{"id":1001,"userName":"张三","email":"zhangsan@example.com","status":1,"createTime":"2026-05-27 10:30:00","balance":1280.00,"tags":["VIP","活跃用户"]}}]}`,
+        },
+    ]
+
+    return [
+        { role: 'system', content: systemMsg },
+        ...fewShot,
+        {
+            role: 'user',
+            content: `请为以下 ${exampleItems.length} 个接口生成真实可信的示例 JSON：\n\n${entries.join('\n\n')}`,
         },
     ]
 }
@@ -1126,21 +1246,41 @@ export function buildDbDocPrompt(placeholders) {
         }
     })
 
-    return [
-        {
-            role: 'system',
-            content: `你是一个专业的数据库文档工程师。用户会提供一组数据库表和字段信息，你需要根据表名、字段名、字段类型等上下文推断出专业、简洁的中文注释。
+    const systemMsg = `你为一份正式的项目交付级数据库设计文档推断表注释与字段注释。读者是项目验收人员和后续维护开发，需要看一眼字段名就知道用途。
 
-输出要求：
-1. 返回标准 JSON 格式：{"results": [{"key": "...", "value": "推断的注释"}, ...]}
-2. 表注释：简洁说明表的用途，通常 4-10 个汉字，如 "用户信息表"、"订单记录表"
-3. 列注释：简洁说明字段含义，通常 2-10 个汉字，如 "创建时间"、"用户ID"、"是否删除"
-4. 根据命名惯例推断：create_time → 创建时间, is_deleted → 是否删除, user_name → 用户名
-5. 不要包含任何额外解释，只返回 JSON`
-        },
+输出形式：
+- 仅输出 JSON：{"results":[{"key":"<原样回传>","value":"<中文注释>"}, ...]}
+- value 风格：表注释 4-12 字，字段注释 2-12 字，名词性短语，不带句号
+- 字段为 is_xxx / has_xxx → "是否XXX"；为 *_time / *_at / gmt_* → "XXX时间"；为 *_id 且非主键 → "XXX的ID"
+- 复合命名拆词后再翻译：tenant_user_id → "租户用户ID"；order_total_amount → "订单总金额"
+- 缩写按行业惯例展开：usr→用户、pwd→密码、cfg→配置、cnt→计数、cnt→次数、qty→数量、addr→地址、acc/acct→账户、tx/txn→交易、del→删除、stat→状态、cat→类别、img→图片、url→链接、ext→扩展
+- 类型作为辅助参考：tinyint(1) / bit 强提示布尔（"是否..."）；decimal/money 强提示金额；varchar+name 强提示名称/称呼
+- 主键 id 字段统一注释为 "主键ID"
+- 不确定时按最常见业务含义推断，不要写"未知"、"待定"、"由系统决定"等占位文本`
+
+    const fewShot = [
         {
             role: 'user',
-            content: `请为以下 ${placeholders.length} 个占位符推断注释：\n\n${entries.join('\n')}`
+            content: `请为以下 5 个占位符推断注释：
+
+#1 [表注释] key="t1" | 表名: sys_user
+#2 [列注释] key="c1" | 表: sys_user | 列: id (bigint) [主键]
+#3 [列注释] key="c2" | 表: sys_user | 列: gmt_create (datetime)
+#4 [列注释] key="c3" | 表: sys_user | 列: is_deleted (tinyint(1)) 默认值=0
+#5 [列注释] key="c4" | 表: order_info | 列: pay_amount (decimal(18,2))`,
+        },
+        {
+            role: 'assistant',
+            content: `{"results":[{"key":"t1","value":"系统用户表"},{"key":"c1","value":"主键ID"},{"key":"c2","value":"创建时间"},{"key":"c3","value":"是否删除"},{"key":"c4","value":"支付金额"}]}`,
+        },
+    ]
+
+    return [
+        { role: 'system', content: systemMsg },
+        ...fewShot,
+        {
+            role: 'user',
+            content: `请为以下 ${placeholders.length} 个占位符推断注释：\n\n${entries.join('\n')}`,
         },
     ]
 }
@@ -1352,7 +1492,7 @@ export async function fillApiDocPlaceholders(config, parseResult, onLog = () => 
         onLog(`[进行] [${bIdx + 1}/${batches.length}] ${batch.name} (${batch.items.length} 项)`, 'info')
         try {
             const messages = buildApiDocPrompt(batch.items)
-            const responseText = await callLlm(config, messages, { maxTokens: 4096, signal: controller?.signal })
+            const responseText = await callLlm(config, messages, { temperature: 0.1, maxTokens: 4096, signal: controller?.signal })
             const { filled } = applyApiDocResults(responseText, batch.items)
             totalFilled += filled
             onLog(`[完成] [${bIdx + 1}/${batches.length}] ${batch.name} → ${filled}/${batch.items.length} 已填充`, 'success')
@@ -1384,7 +1524,7 @@ export async function fillApiDocPlaceholders(config, parseResult, onLog = () => 
             onLog(`[进行] 示例值 [${bIdx + 1}/${exBatches.length}] (${batch.length} 个接口)`, 'info')
             try {
                 const messages = buildApiExamplePrompt(batch)
-                const responseText = await callLlm(config, messages, { maxTokens: 8192, signal: controller?.signal })
+                const responseText = await callLlm(config, messages, { temperature: 0.3, maxTokens: 8192, signal: controller?.signal })
                 const { filled: exFilled } = applyApiExampleResults(responseText, batch)
                 onLog(`[完成] 示例值 [${bIdx + 1}/${exBatches.length}] → ${exFilled}/${batch.length} 已填充`, 'success')
             } catch (e) {
@@ -1422,7 +1562,7 @@ export async function fillDbDocPlaceholders(config, schema, getTableComment, get
         onLog(`[进行] [${bIdx + 1}/${batches.length}] ${batch.name} (${batch.items.length} 项)`, 'info')
         try {
             const messages = buildDbDocPrompt(batch.items)
-            const responseText = await callLlm(config, messages, { maxTokens: 4096, signal: controller?.signal })
+            const responseText = await callLlm(config, messages, { temperature: 0.1, maxTokens: 4096, signal: controller?.signal })
             const { filled, newOverrides } = applyDbDocResults(responseText, batch.items, schema, currentOverrides)
             totalFilled += filled
             currentOverrides = newOverrides

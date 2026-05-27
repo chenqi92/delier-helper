@@ -6,48 +6,82 @@ import { renderTreeAsText } from './codebase-scanner.js'
 import { fillDocSections, createAiController } from './doc-llm-service.js'
 import { callLlm } from '../llm/llm-service.js'
 
+const OPS_FEW_SHOT_PROSE = `## 示例（运维正文）
+错误：本系统部署在 Linux 服务器上，运行稳定，性能良好。
+正确：应用以 systemd 服务方式运行于 192.168.10.21，服务名 \`app-order\`，启动后驻留进程 1 个，监听 0.0.0.0:8081；日志写入 /var/log/app-order/，按天滚动保留 30 天。日常巡检关注三项：systemd 状态、端口监听、磁盘剩余空间（阈值 20%）。`
+
+const OPS_FEW_SHOT_TABLE = `## 示例（运维表格）
+| 服务名 | 端口 | 启动方式 | 日志路径 | 巡检命令 |
+| --- | --- | --- | --- | --- |
+| app-order | 8081 | systemd | /var/log/app-order/ | \`systemctl status app-order\` |
+| nginx | 80、443 | systemd | /var/log/nginx/ | \`nginx -t\` |
+| redis | 6379 | systemd | /var/log/redis/ | \`redis-cli ping\` |`
+
 /**
  * 为运维手册章节构建 LLM prompt
  */
-export function buildOpsSectionPrompt(section, contextSummary, docInfo = {}) {
-    const systemMsg = `你是一个资深的 Linux 服务器运维工程师，正在编写「${docInfo.docTitle || '服务器运维手册'}」。
-请根据用户提供的项目代码结构、服务器扫描信息（包括运行中的服务、端口、软件版本等），为文档的指定章节生成专业的运维内容。
+export function buildOpsSectionPrompt(section, contextSummary, docInfo = {}, previousSummaries = []) {
+    const docTitle = docInfo.docTitle || '服务器运维手册'
+    const audience = '甲方运维团队、值班工程师、故障应急人员'
+    const sectionType = section.type === 'table' ? '表格（Markdown 表格）'
+        : section.type === 'diagram' ? '流程图/架构图（Mermaid 代码）'
+        : '正文'
+    const fewShot = section.type === 'table' ? OPS_FEW_SHOT_TABLE
+        : section.type === 'diagram' ? `## 示例（部署架构图）
+flowchart TB
+  subgraph 内网 192.168.10.0/24
+    LB[Nginx<br>192.168.10.20:443]
+    APP[(应用集群<br>192.168.10.21-23:8081)]
+    DB[(MySQL<br>192.168.10.30:3306)]
+    REDIS[(Redis<br>192.168.10.31:6379)]
+  end
+  USER[运维终端] --SSH--> LB
+  LB --> APP
+  APP --> DB
+  APP --> REDIS`
+        : OPS_FEW_SHOT_PROSE
 
-输出要求：
-1. 使用正式的技术文档语言，适合运维人员阅读
-2. 直接输出章节内容，不要带章节编号和标题前缀（用户已有标题）
-3. 如果是表格类型，使用标准 Markdown 表格格式：
-   - 每个单元格内容必须在一行内完成，绝对不要在单元格中使用换行
-   - 每个单元格内容不超过 80 字，保持简洁
-   - 单元格中不要嵌入代码块（\`\`\`），如需命令请用行内代码 \`command\`
-   - 不要在表格单元格中使用编号列表
-   - 严禁在单元格内容中使用 | 管道符号，多个值请用顿号（、）或逗号分隔
-4. 代码块请使用 \`\`\`bash 或对应语言的代码块格式（仅在非表格内容中使用）
-5. 命令行操作使用 bash 代码块
-6. 不要输出任何解释性前言或总结（例如"以下是..."）
-7. 严禁使用任何 HTML 标签（如 <br>、<code>、<strong> 等），只使用纯 Markdown 格式
-8. 内容要紧凑，避免不必要的空行和冗余说明
-9. 保持内容实用、可操作，运维人员可以直接照做
+    const previousBlock = previousSummaries.length > 0
+        ? `\n## 已生成章节（避免重复展开）\n${previousSummaries.map(s => `- ${s.number} ${s.title}：${s.excerpt}`).join('\n')}\n`
+        : ''
+
+    const systemMsg = `你正在编写《${docTitle}》。读者：${audience}。读者拿到手册就要能照着做日常巡检、配置变更、故障应急，不能停留在概念层面。
+
+内容原则（用正例理解）：
+- 引用具体的服务名、端口、路径、命令、阈值；避免"运行稳定"、"性能良好"这种没有信息量的形容
+- 操作步骤给可复制的 shell 命令，命令前给一句话说明什么场景下用
+- 状态/异常排查给出可观察的判据（"日志出现 OutOfMemory 字样"、"端口 8081 无监听"等）
+
+输出格式：
+- 类型为「正文」：直接输出 Markdown，可用列表与代码块（\`\`\`bash / \`\`\`shell / \`\`\`yaml 等）；**不**输出章节标题
+- 类型为「表格」：Markdown 表格，单元格一行内、≤ 80 字、不嵌入 \`\`\` 代码块、不用编号列表、不用 \`|\` 字符（多值用顿号、逗号）；表格外可以接 1-2 段补充正文
+- 类型为「流程图/架构图」：仅输出 Mermaid 主体，不要 \`\`\`mermaid 包裹
+
+通用约束：
+- 严禁 HTML 标签（\`<br>\` \`<code>\` \`<strong>\` 等）；只用纯 Markdown
+- 不要输出 "以下是..."、"综上所述" 这类开场和总结
+- 内容必须基于用户提供的服务器扫描数据，不要凭空捏造服务名、端口、路径
 
 安全规则（必须严格遵守）：
-- 内网 IP（10.x.x.x、172.16-31.x.x、192.168.x.x）和端口可以正常出现在文档中
-- 在「访问地址」「对外服务地址」「Web 管理界面地址」等场景中，外网/公网 IP 可以正常出现
-- 在服务器配置总览、硬件环境等内部管理表格中，不要列出外网 IP 列
-- 严禁出现密码、API Key、Token、Secret 等敏感信息，一律使用 \`********\` 占位
-- 严禁出现数据库连接密码、SSH 密码、登录凭证等
-- 不要在文档中放置完整的 SSH 登录参数（IP+端口+账号+密码的组合）
-- 用户名可以保留（如 root、admin），但密码必须屏蔽`
+- 内网 IP（10.x、172.16-31.x、192.168.x）、内网端口可以正常出现
+- "访问地址"、"对外服务地址"、"Web 管理界面" 等场景可以出现公网 IP
+- "服务器硬件总览"、"内部管理表格" 中不要列公网 IP 列
+- 密码、API Key、Token、Secret、JDBC 密码、SSH 密码 → 一律 \`********\` 占位，绝不输出明文
+- 不要在文档里把"IP + 端口 + 用户名 + 密码"完整拼成一行（哪怕密码是占位）
+- root、admin 等用户名可保留
+
+${fewShot}`
 
     const userMsg = `${contextSummary}
-
+${previousBlock}
 ---
 
 ## 当前章节
 - 编号：${section.number}
 - 标题：${section.title}
-- 类型：${section.type === 'table' ? '表格（请输出 Markdown 表格）' : section.type === 'diagram' ? '流程图/架构图（请输出 Mermaid 代码）' : '正文'}
+- 类型：${sectionType}
 
-## 生成要求
+## 章节要求
 ${section.prompt}`
 
     return [

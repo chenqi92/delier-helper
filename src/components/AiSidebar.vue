@@ -6,9 +6,15 @@
       <div v-show="activeTab === 'logs'" class="ai-sidebar-content">
         <div class="ai-sidebar-panel-header">
           <span><ClipboardList :size="14" style="vertical-align:-2px;margin-right:4px;" /> 实时日志</span>
-          <button class="chat-clear-btn" @click="logs = []" title="清空日志">
+          <button class="chat-clear-btn" @click="clearLogs" title="清空日志和用量统计">
             <Trash2 :size="12" />
           </button>
+        </div>
+        <div v-if="tokenUsage.calls > 0" class="ai-token-usage-bar" title="本次会话累计 Token 用量（关闭应用后清零）">
+          <span>本次会话 · {{ tokenUsage.calls }} 次调用</span>
+          <span>· 输入 {{ formatTokens(tokenUsage.promptTokens) }}</span>
+          <span>· 输出 {{ formatTokens(tokenUsage.completionTokens) }}</span>
+          <span>· 合计 {{ formatTokens(tokenUsage.totalTokens) }}</span>
         </div>
         <div class="ai-sidebar-log-list" ref="logListRef">
           <div v-if="logs.length === 0" class="ai-sidebar-empty">
@@ -175,6 +181,7 @@ export default {
       conversations: [],
       currentConversationId: null,
       showConvList: false,
+      tokenUsage: { calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     }
   },
   mounted() {
@@ -194,6 +201,15 @@ export default {
     }
     window.addEventListener('ai-fill-start', this._aiStartHandler)
 
+    this._usageHandler = (e) => {
+      const u = e.detail || {}
+      this.tokenUsage.calls += 1
+      this.tokenUsage.promptTokens += (u.promptTokens || 0)
+      this.tokenUsage.completionTokens += (u.completionTokens || 0)
+      this.tokenUsage.totalTokens += (u.totalTokens || 0)
+    }
+    window.addEventListener('llm-usage', this._usageHandler)
+
     // 初始化时从全局 store 同步选中状态
     this.syncSelectionFromStore()
 
@@ -210,6 +226,7 @@ export default {
   beforeUnmount() {
     if (this._logHandler) window.removeEventListener('ai-log', this._logHandler)
     if (this._aiStartHandler) window.removeEventListener('ai-fill-start', this._aiStartHandler)
+    if (this._usageHandler) window.removeEventListener('llm-usage', this._usageHandler)
   },
   computed: {
     currentProviderModels() {
@@ -226,6 +243,16 @@ export default {
     },
   },
   methods: {
+    formatTokens(n) {
+      if (!n) return '0'
+      if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M'
+      if (n >= 1000) return (n / 1000).toFixed(1) + 'K'
+      return String(n)
+    },
+    clearLogs() {
+      this.logs = []
+      this.tokenUsage = { calls: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 }
+    },
     toggleTab(tab) {
       this.activeTab = this.activeTab === tab ? null : tab
       if (tab === 'chat') {
@@ -546,6 +573,22 @@ export default {
 </script>
 
 <style scoped>
+.ai-token-usage-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+  user-select: none;
+}
+.ai-token-usage-bar > span:first-child {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
 /* 图片预览条 */
 .chat-image-preview-bar {
   display: flex;

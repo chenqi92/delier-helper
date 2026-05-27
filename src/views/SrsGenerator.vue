@@ -188,7 +188,9 @@ import { createSrsTemplate, getEnabledLeafSections, countSections, findSectionBy
 import { scanCodebase, buildContextSummary } from '../core/doc-template/codebase-scanner.js'
 import { renderDocSections } from '../core/doc-template/doc-docx-renderer.js'
 import { renderSectionsToMarkdown } from '../core/doc-template/ops-md-renderer.js'
-import { fillDocSections, buildDocSectionPrompt, applyDocSectionResult, createAiController } from '../core/doc-template/doc-llm-service.js'
+import { fillDocSections, buildDocSectionPrompt, applyDocSectionResult, evaluateSectionQuality, createAiController } from '../core/doc-template/doc-llm-service.js'
+
+const SECTION_TEMPERATURE = { diagram: 0.1, table: 0.35, text: 0.55 }
 import { loadProviderConfigs, loadActiveSelection, getResolvedConfig, callLlm } from '../core/llm/llm-service.js'
 import { saveRecentProject, getRecentProjects, savePageConfig, loadPageConfig, getSetting, setSetting } from '../core/db.js'
 import SectionEditor from '../components/SectionEditor.vue'
@@ -460,12 +462,18 @@ export default {
         const messages = buildDocSectionPrompt(section, contextSummary, this.docInfo)
         const defaultMaxTokens = section.type === 'diagram' ? 4096 : 16384
         const maxTokens = config.maxOutputTokens || defaultMaxTokens
-        const responseText = await callLlm(config, messages, { maxTokens, temperature: 0.4 })
+        const temperature = SECTION_TEMPERATURE[section.type] ?? 0.5
+        const responseText = await callLlm(config, messages, { maxTokens, temperature, jsonMode: false })
         applyDocSectionResult(responseText, section)
         section.generating = false
         section.error = null
+        const warnings = evaluateSectionQuality(section)
         this.sections = [...this.sections]
-        this.addLog(`[完成] ${section.number} ${section.title} ✓`, 'success')
+        if (warnings.length > 0) {
+          this.addLog(`[完成] ${section.number} ${section.title} ⚠ ${warnings.join('；')}`, 'warn')
+        } else {
+          this.addLog(`[完成] ${section.number} ${section.title} ✓`, 'success')
+        }
         this.showToast(`${section.number} ${section.title} 生成完成`, 'success')
       } catch (e) {
         section.generating = false

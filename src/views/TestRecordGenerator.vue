@@ -189,7 +189,9 @@ import { FolderOpen, Search, X, Check, FileDown, FileText, ChevronRight, Bot, Up
 import { createTestRecordTemplate, getEnabledLeafSections, findSectionById, injectExcelSections } from '../core/doc-template/test-template.js'
 import { renderDocSections } from '../core/doc-template/doc-docx-renderer.js'
 import { renderSectionsToMarkdown } from '../core/doc-template/ops-md-renderer.js'
-import { fillDocSections, buildDocSectionPrompt, applyDocSectionResult, createAiController } from '../core/doc-template/doc-llm-service.js'
+import { fillDocSections, buildDocSectionPrompt, applyDocSectionResult, evaluateSectionQuality, createAiController } from '../core/doc-template/doc-llm-service.js'
+
+const SECTION_TEMPERATURE = { diagram: 0.1, table: 0.35, text: 0.55 }
 import { getResolvedConfig, callLlm } from '../core/llm/llm-service.js'
 import { savePageConfig, loadPageConfig, getSetting, setSetting } from '../core/db.js'
 import { parseTestExcel, sheetsToMarkdown, getBasicStats } from '../core/doc-template/test-excel-parser.js'
@@ -436,10 +438,12 @@ export default {
         contextSummary += this._buildExcelContext()
         const messages = buildDocSectionPrompt(section, contextSummary, this.docInfo)
         const maxTokens = config.maxOutputTokens || 16384
-        const responseText = await callLlm(config, messages, { maxTokens, temperature: 0.4 })
+        const temperature = SECTION_TEMPERATURE[section.type] ?? 0.5
+        const responseText = await callLlm(config, messages, { maxTokens, temperature, jsonMode: false })
         applyDocSectionResult(responseText, section)
         section.generating = false
         section.error = null
+        evaluateSectionQuality(section)
         this.sections = [...this.sections]
         this.showToast(`${section.number} ${section.title} 生成完成`, 'success')
       } catch (e) {
