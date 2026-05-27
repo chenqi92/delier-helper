@@ -92,7 +92,7 @@
                 <label class="form-label">API Key</label>
                 <div style="display:flex;gap:6px;">
                   <input :type="showKey ? 'text' : 'password'" class="form-input" style="flex:1;"
-                         v-model="form.apiKey" placeholder="sk-..." />
+                         v-model="form.apiKey" :placeholder="apiKeyPlaceholder" />
                   <button class="btn btn-secondary btn-sm" @click="showKey = !showKey" style="min-width:36px;" :title="showKey ? '隐藏' : '显示'">
                     <Eye v-if="!showKey" :size="14" />
                     <EyeOff v-else :size="14" />
@@ -391,6 +391,11 @@ export default {
       if (!this.form) return ''
       const preset = this.providerPresets.find(p => p.id === this.form.providerId)
       return preset?.note || ''
+    },
+    apiKeyPlaceholder() {
+      if (!this.form) return 'sk-...'
+      const preset = this.providerPresets.find(p => p.id === this.form.providerId)
+      return preset?.apiKeyPlaceholder || 'sk-...'
     },
   },
   async mounted() {

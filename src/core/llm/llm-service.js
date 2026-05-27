@@ -130,7 +130,8 @@ export const LLM_PROVIDERS = [
         id: 'xiaomimimo',
         label: '小米 MiMo',
         baseUrl: 'https://token-plan-cn.xiaomimimo.com/v1',
-        note: '兼容 OpenAI；Anthropic 兼容路径为 /anthropic。建议用「检测模型」拉取当前账户实际可用列表。',
+        apiKeyPlaceholder: 'tp-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+        note: '⚠ API Key 必须以 tp- 开头，从控制台复制时不要丢前缀（否则报 401 Invalid API Key）。兼容 OpenAI；Anthropic 兼容路径为 /anthropic。',
         models: [
             { id: 'MiMo-V2.5-Pro', label: 'MiMo V2.5 Pro', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 131072 },
             { id: 'MiMo-V2.5', label: 'MiMo V2.5', capabilities: { multimodal: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 131072 },
@@ -425,6 +426,60 @@ function inferCapabilitiesFromId(modelId, caps = {}) {
 }
 
 /**
+ * 从模型 ID 推断上下文长度
+ * 在 API 未提供 context_length 字段时（如 NVIDIA NIM、SiliconFlow 等）作为智能默认值
+ * 返回 0 表示无法推断，由调用方走最终 fallback
+ */
+function inferContextLengthFromId(modelId) {
+    const id = (modelId || '').toLowerCase()
+
+    // ===== 1M 级别 =====
+    if (/gpt-4\.1|gpt-5/.test(id)) return 1000000
+    if (/gemini-(2\.5|3)/.test(id)) return 1048576
+    if (/qwen.*-long/.test(id) || /qwen-turbo/.test(id)) return 1000000
+    if (/glm-4-long/.test(id)) return 1000000
+
+    // ===== 200K 级别 =====
+    if (/claude/.test(id) && /opus-4-7|opus.*4\.7|opus-4\.7/.test(id)) return 1000000
+    if (/claude/.test(id)) return 200000
+    if (/o[134]\b|o4-mini/.test(id)) return 200000
+
+    // ===== 128K-131K 级别 =====
+    if (/llama-?3\.[123]/.test(id)) return 131072
+    if (/nemotron/.test(id)) return 131072
+    if (/qwen3|qwen2\.5/.test(id)) return 131072
+    if (/deepseek.*(r1|v3|chat|reasoner)/.test(id)) return 131072
+    if (/mistral-large-2|mistral-large.*2/.test(id)) return 131072
+    if (/mixtral.*8x22/.test(id)) return 65536
+    if (/phi-3\.5/.test(id)) return 131072
+    if (/yi-1\.5.*-32k|yi.*-200k/.test(id)) return 200000
+    if (/glm-4(-plus|-flash|-flashx)?(\b|$)/.test(id)) return 131072
+    if (/moonshot.*128k|kimi-?k2/.test(id)) return 131072
+    if (/doubao.*(pro|seed|1-5|1-6|128k)/.test(id)) return 131072
+    if (/spark-pro|spark.*ultra|4\.0ultra/.test(id)) return 131072
+    if (/baichuan.*128k|baichuan4/.test(id)) return 131072
+
+    // ===== 64K 级别 =====
+    if (/deepseek.*coder/.test(id)) return 65536
+    if (/qwen.*coder/.test(id)) return 65536
+
+    // ===== 32K 级别 =====
+    if (/llama-?3(\b|-)|llama-?3-instruct/.test(id)) return 8192
+    if (/mistral-small|mistral-7b|mistral-nemo/.test(id)) return 32768
+    if (/qwen|qwq/.test(id)) return 32768
+    if (/codestral/.test(id)) return 32768
+
+    // ===== 16K 以下 =====
+    if (/gemma-2/.test(id)) return 8192
+    if (/gemma(\b|-)/.test(id)) return 8192
+    if (/llama-?2/.test(id)) return 4096
+    if (/phi-3(\b|-)/.test(id)) return 4096
+    if (/spark-lite/.test(id)) return 8192
+
+    return 0
+}
+
+/**
  * 自动检测本地 LLM 服务的可用模型列表
  * @param {Object} providerCfg - 包含 providerId, baseUrl, apiKey 的配置
  * @returns {Promise<{success: boolean, models: ModelDef[], message: string}>}
@@ -471,14 +526,20 @@ export async function detectModels(providerCfg) {
                     id,
                     label: id.split(':')[0],
                     capabilities: caps,
-                    contextLength: details.context_length || m.context_length || 32768,
+                    contextLength: details.context_length || m.context_length || inferContextLengthFromId(id) || 32768,
                 }
             })
         } else if (Array.isArray(data.data)) {
             // OpenAI 兼容格式: { data: [{ id, context_length?, architecture?, ... }] }
             models = data.data.map(m => {
                 const caps = {}
-                const ctx = m.context_length || m.max_model_len || 32768
+                // 优先级: API 字段 → 按模型家族推断 → 32768 兜底
+                const ctx = m.context_length
+                    || m.max_model_len
+                    || m.max_input_tokens
+                    || (m.architecture && (m.architecture.context_length || m.architecture.max_input_tokens))
+                    || inferContextLengthFromId(m.id)
+                    || 32768
 
                 // OpenRouter / 部分平台返回 architecture.modality
                 const arch = m.architecture || {}
