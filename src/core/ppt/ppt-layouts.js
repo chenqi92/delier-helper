@@ -154,6 +154,134 @@ function mediaPlaceholder(theme, style, box, icon, caption) {
   return els
 }
 
+// ===================== 封面：按母题给出迥异的构图 =====================
+
+// 同母题但不同风格时，用另一套装饰避免「结构雷同」
+const ALT_COVER = new Set(['teal-trust', 'forest', 'punk'])
+
+function coverChip(content, style) {
+  const c = style.colors, bgc = c.bgDark, ink = c.inkLight, acc = ensureContrast(c.accent, c.bgDark, 3)
+  const els = []
+  if (ALT_COVER.has(style.id)) {
+    for (let i = 1; i <= 4; i++) { const r = i * 0.72; els.push(E.ellipse({ x: SLIDE_W - 0.6 - r, y: 0.4 - r, w: 2 * r, h: 2 * r, fill: null, line: { color: acc, width: 1 }, opacity: 0.5, decor: true })) }
+  } else {
+    for (let r = 0; r < 4; r++) for (let k = 0; k < 6; k++) els.push(E.ellipse({ x: 9.7 + k * 0.46, y: 0.7 + r * 0.46, w: 0.09, h: 0.09, fill: acc, fillAlpha: 0.5, decor: true }))
+  }
+  els.push(E.ellipse({ x: SLIDE_W - 3.0, y: SLIDE_H - 3.2, w: 4.6, h: 4.6, fill: acc, fillAlpha: 0.1, decor: true }))
+  els.push(E.rect({ x: 0, y: 0, w: 0.18, h: SLIDE_H, fill: acc }))
+  if (content.kicker) {
+    const w = chipWidth(content.kicker)
+    els.push(E.roundRect({ x: 1.1, y: 1.9, w, h: 0.4, radius: 0.2, fill: acc }))
+    els.push(E.text({ x: 1.1, y: 1.9, w, h: 0.4, text: content.kicker, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 12, bold: true, color: pickInk(acc) }))
+  }
+  els.push(E.text({ x: 1.08, y: 2.5, w: 10.5, h: 1.8, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 46, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 50 }))
+  els.push(E.rect({ x: 1.12, y: 4.45, w: 1.0, h: 0.07, fill: acc }))
+  if (content.subtitle) els.push(E.text({ x: 1.12, y: 4.7, w: 9.5, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 17, color: mix(ink, bgc, 0.25), lineSpacing: 23 }))
+  if (content.footnote) els.push(E.text({ x: 1.12, y: SLIDE_H - 0.9, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 12, color: mix(ink, bgc, 0.45) }))
+  return { background: { type: 'color', color: bgc }, elements: els }
+}
+
+function coverSerif(content, style) {
+  const c = style.colors, bgc = c.bgLight, ink = c.inkDark, acc = c.accent
+  const els = []
+  els.push(E.rect({ x: SLIDE_W - 0.55, y: 0, w: 0.55, h: SLIDE_H, fill: acc }))
+  if (content.kicker) els.push(E.text({ x: 1.1, y: 1.4, w: 8, h: 0.4, text: String(content.kicker).toUpperCase(), fontFace: style.fonts.body, fontSize: 13, bold: true, color: acc, charSpacing: 4 }))
+  els.push(E.rect({ x: 1.12, y: 1.96, w: 0.7, h: 0.06, fill: ink }))
+  els.push(E.text({ x: 1.06, y: 2.2, w: 10.2, h: 3.0, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 62, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 64 }))
+  if (content.subtitle) els.push(E.text({ x: 1.12, y: 5.5, w: 9.2, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 16, italic: true, color: mix(ink, bgc, 0.35), lineSpacing: 22 }))
+  if (content.footnote) els.push(E.text({ x: 1.12, y: SLIDE_H - 0.85, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 11.5, color: mix(ink, bgc, 0.45) }))
+  return { background: { type: 'color', color: bgc }, elements: els }
+}
+
+function coverBlock(content, style) {
+  const c = style.colors, bgc = c.bgDark, ink = c.inkLight
+  const acc = ensureContrast(c.accent, c.bgDark, 3), sec = c.secondary
+  const els = []
+  els.push(E.rect({ x: 0, y: 4.7, w: SLIDE_W, h: SLIDE_H - 4.7, fill: acc }))
+  if (ALT_COVER.has(style.id)) {
+    els.push(E.rect({ x: -1.5, y: 0.45, w: 7.5, h: 0.7, fill: sec, rot: -8, decor: true }))
+    els.push(E.rect({ x: 8.5, y: 0, w: 0.45, h: 4.7, fill: sec }))
+  } else {
+    els.push(E.rect({ x: 8.8, y: 0, w: SLIDE_W - 8.8, h: 4.7, fill: mix(bgc, acc, 0.18) }))
+    els.push(E.roundRect({ x: 9.7, y: 1.2, w: 2.4, h: 2.4, radius: 0.16, fill: sec, fillAlpha: 0.92, rot: 12, decor: true }))
+  }
+  if (content.kicker) {
+    const w = chipWidth(content.kicker)
+    els.push(E.roundRect({ x: 1.1, y: 1.4, w, h: 0.42, radius: 0.08, fill: sec }))
+    els.push(E.text({ x: 1.1, y: 1.4, w, h: 0.42, text: content.kicker, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 12, bold: true, color: pickInk(sec) }))
+  }
+  els.push(E.text({ x: 1.05, y: 2.0, w: 8.0, h: 2.5, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 52, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 54 }))
+  if (content.subtitle) els.push(E.text({ x: 1.1, y: 5.0, w: 7.5, h: 1.4, text: content.subtitle, fontFace: style.fonts.body, fontSize: 17, bold: true, color: pickInk(acc), valign: 'middle', lineSpacing: 22 }))
+  if (content.footnote) els.push(E.text({ x: 9.0, y: 5.0, w: 3.7, h: 1.4, text: content.footnote, align: 'right', fontFace: style.fonts.body, fontSize: 12, color: pickInk(acc), valign: 'middle' }))
+  return { background: { type: 'color', color: bgc }, elements: els }
+}
+
+function coverGold(content, style) {
+  const c = style.colors, bgc = c.bgDark, ink = c.inkLight, acc = c.accent
+  const els = []
+  els.push(E.ellipse({ x: SLIDE_W / 2 - 3.3, y: SLIDE_H / 2 - 3.3, w: 6.6, h: 6.6, fill: null, line: { color: acc, width: 0.75 }, decor: true }))
+  if (content.kicker) els.push(E.text({ x: 1.5, y: 2.2, w: SLIDE_W - 3, h: 0.4, text: String(content.kicker).toUpperCase(), align: 'center', fontFace: style.fonts.body, fontSize: 13, bold: true, color: acc, charSpacing: 5 }))
+  els.push(E.line({ x: SLIDE_W / 2 - 1.0, y: 2.9, w: 2.0, h: 0, lineColor: acc, lineWidth: 1.25 }))
+  els.push(E.text({ x: 1.0, y: 3.1, w: SLIDE_W - 2, h: 1.3, text: content.title || '标题', align: 'center', fontFace: style.fonts.title, fontSize: 40, bold: true, color: ink, valign: 'middle', shrink: true }))
+  els.push(E.line({ x: SLIDE_W / 2 - 1.0, y: 4.5, w: 2.0, h: 0, lineColor: acc, lineWidth: 1.25 }))
+  if (content.subtitle) els.push(E.text({ x: 1.5, y: 4.75, w: SLIDE_W - 3, h: 0.7, text: content.subtitle, align: 'center', fontFace: style.fonts.body, fontSize: 15, color: mix(ink, bgc, 0.3) }))
+  if (content.footnote) els.push(E.text({ x: 1.5, y: SLIDE_H - 0.8, w: SLIDE_W - 3, h: 0.4, text: content.footnote, align: 'center', fontFace: style.fonts.body, fontSize: 11.5, color: acc }))
+  return { background: { type: 'color', color: bgc }, elements: els }
+}
+
+function coverRule(content, style) {
+  const c = style.colors, bgc = c.bgDark, ink = c.inkLight, acc = ensureContrast(c.accent, c.bgDark, 3)
+  const els = []
+  els.push(E.line({ x: 1.1, y: 1.6, w: SLIDE_W - 2.2, h: 0, lineColor: mix(ink, bgc, 0.6), lineWidth: 1 }))
+  if (content.kicker) els.push(E.text({ x: 1.1, y: 1.25, w: 8, h: 0.32, text: String(content.kicker).toUpperCase(), fontFace: style.fonts.body, fontSize: 11, bold: true, color: acc, charSpacing: 3 }))
+  els.push(E.text({ x: SLIDE_W - 3.1, y: 1.18, w: 2.0, h: 0.32, text: '01', align: 'right', fontFace: style.fonts.title, fontSize: 13, bold: true, color: acc }))
+  els.push(E.text({ x: 1.06, y: 2.6, w: 10.5, h: 1.8, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 44, bold: true, color: ink, valign: 'middle', shrink: true }))
+  if (content.subtitle) els.push(E.text({ x: 1.12, y: 4.5, w: 9.2, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 16, color: mix(ink, bgc, 0.28), lineSpacing: 22 }))
+  els.push(E.line({ x: 1.1, y: SLIDE_H - 1.0, w: SLIDE_W - 2.2, h: 0, lineColor: mix(ink, bgc, 0.6), lineWidth: 1 }))
+  if (content.footnote) els.push(E.text({ x: 1.1, y: SLIDE_H - 0.85, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 11.5, color: mix(ink, bgc, 0.4) }))
+  return { background: { type: 'color', color: bgc }, elements: els }
+}
+
+function coverRounded(content, style) {
+  const c = style.colors, bgc = c.bgLight, ink = c.inkDark, acc = c.accent, sec = c.secondary
+  const els = []
+  if (ALT_COVER.has(style.id)) {
+    els.push(E.ellipse({ x: SLIDE_W - 4.2, y: SLIDE_H - 3.8, w: 5.4, h: 5.4, fill: sec, fillAlpha: 0.45, decor: true }))
+    els.push(E.ellipse({ x: -1.2, y: -1.2, w: 3.2, h: 3.2, fill: acc, fillAlpha: 0.16, decor: true }))
+    els.push(E.ellipse({ x: SLIDE_W - 1.7, y: 0.9, w: 0.55, h: 0.55, fill: acc, fillAlpha: 0.9, decor: true }))
+  } else {
+    els.push(E.ellipse({ x: SLIDE_W - 3.4, y: -1.4, w: 4.4, h: 4.4, fill: sec, fillAlpha: 0.5, decor: true }))
+    els.push(E.ellipse({ x: SLIDE_W - 2.0, y: SLIDE_H - 2.4, w: 3.4, h: 3.4, fill: acc, fillAlpha: 0.18, decor: true }))
+    els.push(E.ellipse({ x: -1.0, y: SLIDE_H - 2.2, w: 3.0, h: 3.0, fill: acc, fillAlpha: 0.12, decor: true }))
+  }
+  if (content.kicker) {
+    const w = chipWidth(content.kicker)
+    els.push(E.roundRect({ x: 1.1, y: 1.9, w, h: 0.42, radius: 0.21, fill: acc }))
+    els.push(E.text({ x: 1.1, y: 1.9, w, h: 0.42, text: content.kicker, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 12, bold: true, color: pickInk(acc) }))
+  }
+  els.push(E.text({ x: 1.08, y: 2.6, w: 9.3, h: 1.8, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 44, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 48 }))
+  if (content.subtitle) els.push(E.text({ x: 1.12, y: 4.6, w: 8.6, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 16, color: mix(ink, bgc, 0.3), lineSpacing: 22 }))
+  if (content.footnote) els.push(E.text({ x: 1.12, y: SLIDE_H - 0.9, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 12, color: mix(ink, bgc, 0.45) }))
+  return { background: { type: 'color', color: bgc }, elements: els }
+}
+
+function coverHairline(content, style) {
+  const c = style.colors, bgc = c.bgLight, ink = c.inkDark, acc = c.accent
+  const els = []
+  els.push(E.rect({ x: 0.4, y: 0.4, w: SLIDE_W - 0.8, h: SLIDE_H - 0.8, fill: null, line: { color: mix(ink, bgc, 0.7), width: 1 } }))
+  els.push(E.ellipse({ x: 1.2, y: 2.12, w: 0.22, h: 0.22, fill: acc }))
+  if (content.kicker) els.push(E.text({ x: 1.62, y: 2.0, w: 8, h: 0.4, text: String(content.kicker).toUpperCase(), fontFace: style.fonts.body, fontSize: 12, bold: true, color: mix(ink, bgc, 0.2), charSpacing: 4, valign: 'middle' }))
+  els.push(E.text({ x: 1.2, y: 2.8, w: 10.5, h: 1.6, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 42, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 46 }))
+  if (content.subtitle) els.push(E.text({ x: 1.22, y: 4.5, w: 9, h: 0.8, text: content.subtitle, fontFace: style.fonts.body, fontSize: 15, color: mix(ink, bgc, 0.35), lineSpacing: 21 }))
+  if (content.footnote) els.push(E.text({ x: 1.2, y: SLIDE_H - 1.1, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 11, color: mix(ink, bgc, 0.45) }))
+  return { background: { type: 'color', color: bgc }, elements: els }
+}
+
+const COVER_BY_MOTIF = {
+  'chip-bar': coverChip, 'serif-big': coverSerif, 'block': coverBlock,
+  'gold-line': coverGold, 'rule-number': coverRule, 'rounded': coverRounded, 'hairline': coverHairline,
+}
+
 // ===================== 版式注册 =====================
 
 export const LAYOUTS = [
@@ -162,13 +290,7 @@ export const LAYOUTS = [
     fields: 'title(主标题), subtitle(副标题/一句话价值), kicker(顶部小标签，可选), footnote(单位/作者/日期，可选)',
     sample: { kicker: 'PRODUCT', title: '主标题占位', subtitle: '一句话副标题', footnote: '汇报单位 · 2026' },
     build(content, style, pageNo) {
-      const t = slideTheme(style, 'cover')
-      const els = [...heroDecor(t, style)]
-      if (content.kicker) els.push(E.text({ x: 1.15, y: 2.05, w: 9, h: 0.4, text: content.kicker, fontFace: style.fonts.body, fontSize: 14, bold: true, color: t.accentText, charSpacing: 3 }))
-      els.push(E.text({ x: 1.12, y: 2.55, w: 10.6, h: 1.9, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 44, bold: true, color: t.ink, valign: 'top', shrink: true, lineSpacing: 48 }))
-      if (content.subtitle) els.push(E.text({ x: 1.15, y: 4.65, w: 9.6, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 18, color: mix(t.ink, t.bg, 0.22), lineSpacing: 24 }))
-      if (content.footnote) els.push(E.text({ x: 1.15, y: SLIDE_H - 0.95, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 12, color: t.muted }))
-      return { background: bg(t), elements: els }
+      return (COVER_BY_MOTIF[style.motif] || coverChip)(content, style)
     },
   },
 

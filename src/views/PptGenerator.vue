@@ -284,17 +284,10 @@ export default {
       return [...getPptPresets().map(t => ({ ...t, isCustom: false })), ...this.customTemplates.map(t => ({ ...t, isCustom: true }))]
     },
     templatePreviews() {
-      const sample = {
-        kicker: '示例', title: '风格预览',
-        cards: [
-          { icon: 'zap', title: '高性能', desc: '示例描述文字内容' },
-          { icon: 'shield', title: '更安全', desc: '示例描述文字内容' },
-          { icon: 'database', title: '易扩展', desc: '示例描述文字内容' },
-        ],
-      }
+      const sample = { kicker: '产品', title: '项目名称', subtitle: '一句话价值主张', footnote: '汇报单位 · 2026' }
       return this.allTemplates.map(t => {
         const sid = (!t.styleId || t.styleId === 'auto') ? 'tech-dark' : t.styleId
-        return { ...t, slide: buildSlide('featureGrid', sample, getStyle(sid), 1) }
+        return { ...t, slide: buildSlide('cover', sample, getStyle(sid), 1) }
       })
     },
     selectedTemplate() {
