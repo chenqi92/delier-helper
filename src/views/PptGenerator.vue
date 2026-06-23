@@ -46,23 +46,37 @@
           <div class="card-header">
             <h3><LayoutTemplate :size="14" /> 模板</h3>
             <button class="card-head-btn" @click="galleryOpen = true" title="平铺查看全部模板">
-              <LayoutGrid :size="13" /> 全部 {{ allTemplates.length }}
+              <LayoutGrid :size="13" /> 平铺
             </button>
           </div>
-          <div class="card-body" style="padding:8px;">
-            <div class="tpl-strip">
-              <div v-for="t in templatePreviews" :key="t.id"
-                :class="['tpl-card', { active: selectedTemplateId === t.id }]"
-                @click="selectedTemplateId = t.id" :title="t.description">
-                <div class="tpl-thumb">
-                  <SlideCanvas :slide="t.slide" :width="186" :interactive="false" />
-                  <button v-if="t.isCustom" class="tpl-del" @click.stop="removeTemplate(t)"><X :size="11" /></button>
-                  <span v-if="t.mode==='fixed'" class="tpl-badge2">固定</span>
+          <div class="card-body" style="padding:10px;">
+            <div class="tpl-carousel">
+              <button class="tpl-nav" @click="shiftTemplate(-1)" :disabled="allTemplates.length <= 1" title="上一个模板">
+                <ChevronLeft :size="16" />
+              </button>
+              <div class="tpl-current" @click="galleryOpen = true" title="点击打开平铺大图预览">
+                <div class="tpl-current-thumb">
+                  <SlideCanvas v-if="selectedTemplatePreview" :slide="selectedTemplatePreview.slide" :width="230" :interactive="false" />
+                  <button v-if="selectedTemplate?.isCustom" class="tpl-del" @click.stop="removeTemplate(selectedTemplate)"><X :size="11" /></button>
+                  <span v-if="selectedTemplate?.mode==='fixed'" class="tpl-badge2">固定</span>
+                  <span class="tpl-count">{{ selectedTemplateIndex + 1 }} / {{ allTemplates.length }}</span>
                 </div>
-                <div class="tpl-card-name">{{ t.name }}</div>
               </div>
+              <button class="tpl-nav" @click="shiftTemplate(1)" :disabled="allTemplates.length <= 1" title="下一个模板">
+                <ChevronRight :size="16" />
+              </button>
             </div>
-            <div class="tpl-desc-line">{{ selectedTemplate?.description }}</div>
+            <div class="tpl-current-meta">
+              <div>
+                <div class="tpl-current-name">{{ selectedTemplate?.name }}</div>
+                <div class="tpl-current-desc">{{ selectedTemplate?.description }}</div>
+              </div>
+              <button class="tpl-grid-btn" @click="galleryOpen = true"><LayoutGrid :size="13" /> 大图</button>
+            </div>
+            <div v-if="selectedTemplate?.skeleton?.length" class="tpl-layout-tags">
+              <span v-for="(s, i) in selectedTemplate.skeleton.slice(0, 5)" :key="i">{{ s.title || s.layout }}</span>
+              <span v-if="selectedTemplate.skeleton.length > 5">+{{ selectedTemplate.skeleton.length - 5 }}</span>
+            </div>
           </div>
         </div>
 
@@ -107,8 +121,15 @@
           <div class="card-header"><h3><Settings :size="14" /> 内容设置</h3></div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:6px;">
             <button class="btn btn-secondary btn-sm" style="width:100%;" :disabled="analyzing || aiProcessing || !scanResult" @click="analyzeProject">
-              <Wand2 :size="14" /> {{ analyzing ? '分析中...' : 'AI 分析项目 · 自动填主题/方向/风格' }}
+              <Wand2 :size="14" /> {{ analyzing ? '分析中...' : 'AI 业务分析 · 自动填主题/方向/风格' }}
             </button>
+            <div v-if="businessBrief" class="business-brief-mini">
+              <div class="bb-title">{{ businessBrief.projectType || businessBrief.summary || '业务上下文已生成' }}</div>
+              <div class="bb-line" v-if="businessBrief.businessCapabilities?.length">
+                {{ businessBrief.businessCapabilities.slice(0, 3).map(c => c.name).join(' / ') }}
+              </div>
+              <div class="bb-line" v-if="storyline?.narrative">{{ storyline.narrative }}</div>
+            </div>
             <div class="form-group">
               <label class="form-label">主题<span style="color:var(--text-muted);font-weight:400;"> · 留空则由 AI 分析项目拟定</span></label>
               <input type="text" class="form-input" v-model="cfg.topic" placeholder="如：XX 管理系统 产品介绍" />
@@ -232,21 +253,28 @@
         <div class="tpl-gallery">
           <div class="tpl-gallery-head">
             <span class="tg-title"><LayoutGrid :size="16" /> 选择模板</span>
-            <span class="tg-hint">点击任意模板即可套用 · 共 {{ allTemplates.length }} 套</span>
+            <span class="tg-hint">大图预览模板风格，点击「使用」切换 · 共 {{ allTemplates.length }} 套</span>
             <button class="tg-close" @click="galleryOpen = false"><X :size="18" /></button>
           </div>
           <div class="tpl-gallery-grid">
             <div v-for="t in templatePreviews" :key="t.id"
               :class="['tg-card', { active: selectedTemplateId === t.id }]"
-              @click="pickTemplate(t.id)">
+              @click="selectedTemplateId = t.id">
               <div class="tg-thumb">
-                <SlideCanvas :slide="t.slide" :width="330" :interactive="false" />
+                <SlideCanvas :slide="t.slide" :width="390" :interactive="false" />
                 <button v-if="t.isCustom" class="tpl-del" @click.stop="removeTemplate(t)"><X :size="12" /></button>
                 <span v-if="t.mode === 'fixed'" class="tpl-badge2">固定</span>
                 <div v-if="selectedTemplateId === t.id" class="tg-check"><Check :size="13" /> 当前</div>
               </div>
-              <div class="tg-name">{{ t.name }}</div>
-              <div class="tg-desc">{{ t.description }}</div>
+              <div class="tg-info">
+                <div>
+                  <div class="tg-name">{{ t.name }}</div>
+                  <div class="tg-desc">{{ t.description }}</div>
+                </div>
+                <button class="tg-use" @click.stop="pickTemplate(t.id)">
+                  {{ selectedTemplateId === t.id ? '关闭' : '使用' }}
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -261,12 +289,13 @@ import { writeFile, readFile } from '@tauri-apps/plugin-fs'
 import {
   Check, Sparkles, FileDown, FolderOpen, Search, X, Settings, Palette, LayoutTemplate, Presentation,
   Save, Type, Square, Circle, Star, Trash2, Copy, CopyPlus, Plus, RefreshCw, ChevronUp, ChevronDown,
-  SquareRoundCorner, Image as ImageIcon, Wand2, LayoutGrid,
+  ChevronLeft, ChevronRight, SquareRoundCorner, Image as ImageIcon, Wand2, LayoutGrid,
 } from 'lucide-vue-next'
 import SlideCanvas from '../components/SlideCanvas.vue'
 import { scanCodebase, buildContextSummary } from '../core/doc-template/codebase-scanner.js'
 import { getResolvedConfig } from '../core/llm/llm-service.js'
-import { generateOutline, generateSlideContent, generateProjectBrief, createAiController } from '../core/ppt/ppt-llm-service.js'
+import { generateOutline, generateSlideContent, createAiController } from '../core/ppt/ppt-llm-service.js'
+import { generateBusinessBrief, generateStoryline, buildPptBusinessContext, briefDirectionText } from '../core/ppt/ppt-business-analyzer.js'
 import { buildDeckFromOutline, restyleDeck, appendBlankSlide } from '../core/ppt/ppt-deck.js'
 import { buildSlide } from '../core/ppt/ppt-layouts.js'
 import { getStyle, listStyles, pickRandomStyle, DEFAULT_STYLE_ID } from '../core/ppt/ppt-styles.js'
@@ -283,7 +312,7 @@ export default {
     SlideCanvas,
     Check, Sparkles, FileDown, FolderOpen, Search, X, Settings, Palette, LayoutTemplate, Presentation,
     Save, Type, Square, Circle, Star, Trash2, Copy, CopyPlus, Plus, RefreshCw, ChevronUp, ChevronDown,
-    SquareRoundCorner, ImageIcon, Wand2, LayoutGrid,
+    ChevronLeft, ChevronRight, SquareRoundCorner, ImageIcon, Wand2, LayoutGrid,
   },
   inject: ['showToast', 'globalStore'],
   data() {
@@ -291,6 +320,8 @@ export default {
       projectDirs: [],
       scanning: false,
       scanResult: null,
+      businessBrief: null,
+      storyline: null,
       deck: null,
       currentSlideIndex: 0,
       selectedElId: null,
@@ -322,6 +353,13 @@ export default {
         const sid = (!t.styleId || t.styleId === 'auto') ? 'tech-dark' : t.styleId
         return { ...t, slide: buildSlide('cover', sample, getStyle(sid), 1) }
       })
+    },
+    selectedTemplateIndex() {
+      const idx = this.allTemplates.findIndex(t => t.id === this.selectedTemplateId)
+      return idx >= 0 ? idx : 0
+    },
+    selectedTemplatePreview() {
+      return this.templatePreviews[this.selectedTemplateIndex] || this.templatePreviews[0] || null
     },
     selectedTemplate() {
       return this.allTemplates.find(t => t.id === this.selectedTemplateId) || this.allTemplates[0]
@@ -406,16 +444,21 @@ export default {
     },
     removeDir(idx) {
       this.projectDirs.splice(idx, 1)
+      this.businessBrief = null
+      this.storyline = null
       if (this.projectDirs.length === 0) this.scanResult = null
     },
     async startScan() {
       if (this.projectDirs.length === 0) return
       this.scanning = true
+      this.businessBrief = null
+      this.storyline = null
       this.addLog('开始扫描代码库...')
       try {
         this.scanResult = await scanCodebase(this.projectDirs)
         const { totalFiles } = this.scanResult.stats
-        this.showToast(`扫描完成！发现 ${totalFiles} 个文件`, 'success')
+        const bizCount = (this.scanResult.business?.keyFiles || []).length
+        this.showToast(`扫描完成！发现 ${totalFiles} 个文件，业务线索 ${bizCount} 处`, 'success')
         if (!this.cfg.topic) {
           for (const cfg of this.scanResult.configs) {
             if (cfg.name !== 'package.json') continue
@@ -487,12 +530,14 @@ export default {
       if (!this.scanResult) { this.showToast('请先扫描代码库', 'warning'); return }
       this.analyzing = true
       try {
-        const brief = await generateProjectBrief(llmConfig, this.buildContext())
-        if (brief.topic) this.cfg.topic = brief.topic
-        if (brief.audience) this.cfg.audience = brief.audience
-        if (brief.direction) this.cfg.direction = brief.direction
-        if (brief.styleId) this.styleOverrideId = brief.styleId
-        this.showToast(brief.summary ? `已分析：${brief.summary}` : '已根据项目填好主题与方向', 'success')
+        const scanContext = this.buildContext()
+        this.addLog('[进行] 业务分析 Agent：识别用户、流程、能力与价值...')
+        const brief = await generateBusinessBrief(llmConfig, scanContext, { ...this.cfg })
+        this.businessBrief = brief
+        this.applyBusinessBriefToCfg(brief, { overwriteDirection: true })
+        this.addLog('[进行] 叙事规划 Agent：组织业务汇报主线...')
+        this.storyline = await generateStoryline(llmConfig, brief, scanContext, { ...this.cfg })
+        this.showToast(brief.summary ? `已分析：${brief.summary}` : '已生成业务上下文', 'success')
       } catch (e) {
         this.showToast('分析失败: ' + String(e.message || e), 'error')
       }
@@ -522,6 +567,39 @@ export default {
       if (!this.scanResult) return ''
       return buildContextSummary(this.scanResult, { projectName: this.cfg.topic }, [])
     },
+    applyBusinessBriefToCfg(brief, opts = {}) {
+      if (!brief) return
+      if (brief.topic && !this.cfg.topic) this.cfg.topic = brief.topic
+      if (brief.audience && !this.cfg.audience) this.cfg.audience = brief.audience
+      const direction = briefDirectionText(brief)
+      if (direction && (opts.overwriteDirection || !this.cfg.direction)) this.cfg.direction = direction
+      if (brief.styleId && opts.applyStyle !== false && !this.styleOverrideId) this.styleOverrideId = brief.styleId
+    },
+    buildPptContext(scanContext, genCfg = {}) {
+      return buildPptBusinessContext({
+        scanContext,
+        businessBrief: this.businessBrief,
+        storyline: this.storyline,
+        cfg: genCfg,
+      })
+    },
+    async ensureBusinessContext(llmConfig, scanContext, genCfg, opts = {}) {
+      if (!this.scanResult) return { businessBrief: null, storyline: null }
+      if (!this.businessBrief) {
+        this.aiProgressText = '业务分析…'
+        this.addLog('[进行] 业务分析 Agent：从代码证据提炼业务上下文...')
+        this.businessBrief = await generateBusinessBrief(llmConfig, scanContext, genCfg, opts)
+        this.applyBusinessBriefToCfg(this.businessBrief, { applyStyle: false })
+        if (this.businessBrief.summary) this.addLog(`[完成] 业务定位：${this.businessBrief.summary}`, 'success')
+      }
+      if (!this.storyline) {
+        this.aiProgressText = '规划汇报主线…'
+        this.addLog('[进行] 叙事规划 Agent：设计汇报主线...')
+        this.storyline = await generateStoryline(llmConfig, this.businessBrief, scanContext, { ...genCfg, ...this.cfg }, opts)
+        if (this.storyline.narrative) this.addLog(`[完成] 汇报主线：${this.storyline.narrative}`, 'success')
+      }
+      return { businessBrief: this.businessBrief, storyline: this.storyline }
+    },
     resolveStyleId(outlineStyleId) {
       if (this.styleOverrideId) return this.styleOverrideId
       const tplStyle = this.selectedTemplate?.styleId
@@ -538,27 +616,19 @@ export default {
       this.aiProcessing = true
       this.aiController = createAiController()
       window.dispatchEvent(new Event('ai-fill-start'))
-      const contextSummary = this.buildContext()
+      const scanContext = this.buildContext()
       const tpl = this.selectedTemplate
       const imgSrcs = this.images.map(i => i.src)
 
       try {
-        // 项目分析：主题留空且已扫描时，先由 AI 分析项目定主题/方向/风格
-        let briefStyle = null
-        if (!this.cfg.topic && this.scanResult) {
-          this.aiProgressText = '分析项目…'
-          this.addLog('[进行] 分析项目，推导主题...')
-          try {
-            const brief = await generateProjectBrief(llmConfig, contextSummary, { signal: this.aiController.signal })
-            if (brief.topic) this.cfg.topic = brief.topic
-            if (brief.audience && !this.cfg.audience) this.cfg.audience = brief.audience
-            if (brief.direction && !this.cfg.direction) this.cfg.direction = brief.direction
-            briefStyle = brief.styleId
-            if (brief.summary) this.addLog(`[完成] 项目定位：${brief.summary}`, 'success')
-          } catch (e) { if (e.name === 'AbortError') throw e }
-        }
         const tplStyle = (tpl?.styleId && tpl.styleId !== 'auto') ? tpl.styleId : null
-        const genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || briefStyle || 'auto' }
+        let genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || this.businessBrief?.styleId || 'auto' }
+
+        if (this.scanResult) {
+          await this.ensureBusinessContext(llmConfig, scanContext, genCfg, { signal: this.aiController.signal })
+          genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || this.businessBrief?.styleId || 'auto' }
+        }
+        const contextSummary = this.buildPptContext(scanContext, genCfg) || scanContext
 
         // 阶段 A：大纲
         this.aiProgressText = '正在编排大纲…'
@@ -583,6 +653,8 @@ export default {
         const meta = { topic: this.cfg.topic, audience: this.cfg.audience, language: this.cfg.language, direction: this.cfg.direction, footnote: this.cfg.footnote }
         this.deck = buildDeckFromOutline(outline, meta)
         this.deck.assets = { images: imgSrcs }
+        this.deck.businessBrief = this.businessBrief
+        this.deck.storyline = this.storyline
         this.currentSlideIndex = 0
         this.selectedElId = null
         this.$nextTick(this.updateSize)
@@ -642,7 +714,9 @@ export default {
       s.pending = true
       try {
         const o = { layout: s.layout, title: s.title, intent: s.intent || '' }
-        const content = await generateSlideContent(llmConfig, o, this.buildContext(), { ...this.cfg }, [], { signal: this.aiController.signal })
+        const scanContext = this.buildContext()
+        const pptContext = this.buildPptContext(scanContext, { ...this.cfg })
+        const content = await generateSlideContent(llmConfig, o, pptContext || scanContext, { ...this.cfg }, [], { signal: this.aiController.signal })
         this.applyCoverFootnote(s.layout, content)
         // 保留本页原有配图；若原本没有则按需补一张
         if (s.content) {
@@ -764,6 +838,11 @@ export default {
     },
 
     // ===== 模板 =====
+    shiftTemplate(delta) {
+      if (!this.allTemplates.length) return
+      const next = (this.selectedTemplateIndex + delta + this.allTemplates.length) % this.allTemplates.length
+      this.selectedTemplateId = this.allTemplates[next].id
+    },
     async saveAsTemplate() {
       if (!this.deck) return
       const name = window.prompt('模板名称', this.cfg.topic ? this.cfg.topic + ' 模板' : '我的 PPT 模板')
@@ -828,22 +907,59 @@ export default {
 .swatch { width: 20px; height: 20px; border-radius: 5px; border: 2px solid transparent; cursor: pointer; }
 .swatch.active { outline: 2px solid var(--primary-500); outline-offset: 1px; }
 
-.tpl-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
-.tpl-card { flex: 0 0 auto; width: 188px; cursor: pointer; scroll-snap-align: start; }
-.tpl-thumb { position: relative; border: 2px solid transparent; border-radius: 7px; overflow: hidden; line-height: 0; }
-.tpl-card.active .tpl-thumb { border-color: var(--primary-500); box-shadow: var(--shadow-glow); }
-.tpl-card-name { font-size: 11.5px; font-weight: 600; color: var(--text-primary); margin-top: 5px; text-align: center; }
-.tpl-card.active .tpl-card-name { color: var(--primary-500); }
+.tpl-carousel { display: grid; grid-template-columns: 30px minmax(0, 1fr) 30px; gap: 8px; align-items: center; }
+.tpl-nav {
+  width: 30px; height: 30px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border-color); background: var(--bg-elevated); color: var(--text-secondary);
+  border-radius: var(--radius-sm); cursor: pointer; transition: all var(--transition-fast);
+}
+.tpl-nav:hover:not(:disabled) { color: var(--primary-500); border-color: var(--border-hover); }
+.tpl-nav:disabled { opacity: 0.35; cursor: not-allowed; }
+.tpl-current { min-width: 0; cursor: pointer; }
+.tpl-current-thumb {
+  position: relative; width: fit-content; max-width: 100%; margin: 0 auto;
+  border: 2px solid var(--primary-500); border-radius: 8px; overflow: hidden; line-height: 0;
+  box-shadow: var(--shadow-glow); background: var(--bg-app);
+}
+.tpl-count {
+  position: absolute; bottom: 5px; left: 6px; font-size: 10px; line-height: 1.2;
+  color: #fff; background: rgba(0,0,0,0.52); padding: 2px 7px; border-radius: 10px;
+}
+.tpl-current-meta { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-top: 8px; }
+.tpl-current-name { font-size: 12.5px; font-weight: 700; color: var(--text-primary); line-height: 1.35; }
+.tpl-current-desc { font-size: 11px; color: var(--text-secondary); margin-top: 2px; line-height: 1.45; }
+.tpl-grid-btn {
+  flex-shrink: 0; display: flex; align-items: center; gap: 4px;
+  border: 1px solid var(--border-color); background: var(--bg-elevated); color: var(--text-secondary);
+  border-radius: var(--radius-sm); padding: 4px 7px; font-size: 11px; cursor: pointer;
+}
+.tpl-grid-btn:hover { color: var(--primary-500); border-color: var(--border-hover); }
+.tpl-layout-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 7px; }
+.tpl-layout-tags span {
+  max-width: 92px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 10px; color: var(--text-secondary); border: 1px solid var(--border-color);
+  background: var(--bg-secondary); border-radius: 10px; padding: 2px 6px;
+}
 .tpl-del { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.55); border: none; color: #fff; border-radius: 4px; padding: 2px; cursor: pointer; display: flex; }
 .tpl-del:hover { background: var(--danger-500); }
 .tpl-badge2 { position: absolute; top: 4px; left: 4px; font-size: 9px; background: var(--primary-500); color: #fff; padding: 1px 6px; border-radius: 6px; font-weight: 600; }
-.tpl-desc-line { font-size: 11px; color: var(--text-secondary); margin-top: 6px; line-height: 1.5; }
 
 .img-thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
 .img-thumb { position: relative; aspect-ratio: 1; border-radius: 5px; overflow: hidden; border: 1px solid var(--border-color); }
 .img-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .img-del { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.55); border: none; color: #fff; border-radius: 3px; padding: 1px; cursor: pointer; display: flex; }
 .img-del:hover { background: var(--danger-500); }
+
+.business-brief-mini {
+  padding: 8px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  line-height: 1.45;
+}
+.bb-title { font-size: 12px; font-weight: 700; color: var(--text-primary); margin-bottom: 3px; }
+.bb-line { font-size: 11px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 
 .card-head-btn {
   display: flex; align-items: center; gap: 4px;
@@ -874,17 +990,25 @@ export default {
 .tg-close:hover { color: var(--danger-500); border-color: var(--danger-500); }
 .tpl-gallery-grid {
   flex: 1; overflow-y: auto; padding: 18px;
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(390px, 1fr));
   gap: 18px; align-content: start; justify-items: center;
 }
-.tg-card { width: 330px; cursor: pointer; }
+.tg-card { width: 390px; cursor: pointer; }
 .tg-thumb { position: relative; border: 2px solid var(--border-color); border-radius: 8px; overflow: hidden; line-height: 0; transition: all var(--transition-fast); }
 .tg-card:hover .tg-thumb { border-color: var(--border-hover); transform: translateY(-2px); box-shadow: 0 10px 26px rgba(0,0,0,0.3); }
 .tg-card.active .tg-thumb { border-color: var(--primary-500); box-shadow: var(--shadow-glow); }
-.tg-name { font-size: 13.5px; font-weight: 700; color: var(--text-primary); margin-top: 8px; }
+.tg-info { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; margin-top: 8px; }
+.tg-name { font-size: 13.5px; font-weight: 700; color: var(--text-primary); margin-top: 0; }
 .tg-card.active .tg-name { color: var(--primary-500); }
 .tg-desc { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
 .tg-check { position: absolute; bottom: 6px; right: 6px; display: flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: #fff; background: var(--primary-500); padding: 2px 8px; border-radius: 10px; line-height: 1.2; }
+.tg-use {
+  flex-shrink: 0; border: 1px solid var(--border-color); background: var(--bg-elevated);
+  color: var(--text-secondary); border-radius: var(--radius-sm); padding: 5px 10px;
+  font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.tg-use:hover { color: var(--primary-500); border-color: var(--primary-500); }
+.tg-card.active .tg-use { color: #fff; background: var(--primary-500); border-color: var(--primary-500); }
 
 .editor-toolbar {
   display: flex; align-items: center; gap: 10px;

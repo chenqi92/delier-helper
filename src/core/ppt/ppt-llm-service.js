@@ -61,7 +61,9 @@ export function buildOutlineMessages(contextSummary, cfg, lastStyleId = null) {
     : `风格未指定，请从风格库中选一个最契合主题与受众的风格${lastStyleId ? `，且不要选 "${lastStyleId}"（避免与上次重复）` : ''}。`
 
   const imgCount = Math.max(0, parseInt(cfg.imageCount, 10) || 0)
-  const system = `你是资深演示设计师 + 演示文稿工程师。先【分析这个项目/代码库的性质】（是什么系统、技术栈、面向谁、核心价值），再据此为它量身定一条叙事主线，然后产出 PPT 的【大纲】。不要套用千篇一律的固定结构。
+  const system = `你是资深业务汇报顾问 + 演示设计师。你拿到的上下文可能包含“业务分析简报”“汇报叙事主线”和“代码证据上下文”。
+
+你的任务是先遵循业务简报与叙事主线，围绕用户、场景、流程、能力、价值、实施与风险设计 PPT 大纲；代码、目录、技术栈只能作为证据和支撑，不要把 PPT 做成代码结构说明。不要套用千篇一律的固定结构。
 
 只输出 JSON，结构：
 {
@@ -82,9 +84,18 @@ ${layoutMenuForPrompt()}
 4. 相邻两页 layout 不同；整体要有节奏与变化。
 5. ${styleDirective}
 6. title 用 ${language}，具体、有信息量；intent 描述核心信息。
-7. 内容紧扣代码库上下文与「内容大方向」，主题由你分析项目后拟定。
+7. 内容紧扣业务上下文与「内容大方向」，主题由业务分析简报/用户输入确定。
+8. 若上下文包含 mustHaveSlides / sections，请优先覆盖这些关键页，但仍要命中总页数。
 
-【视觉多样性（重点）】不要整套都是图标卡。卡片网格类版式（iconCards/featureGrid/capabilityGrid）合计不超过 2 页。要主动穿插数据/图示类版式让 PPT 有亮点：
+【业务表达（重点）】至少 60% 的中间页要从业务角度命名和组织，例如业务全景、用户旅程、核心流程、价值矩阵、风险控制、实施路径。只有 1-2 页可以直接讲技术架构/技术栈。
+
+【高级设计感（重点）】整套 PPT 要有“完整设计稿”的密度：封面/章节/内容页节奏明显，内容页优先使用图示、矩阵、流程、图表、对照结构承载信息；不要大量使用单列 bullets，也不要每页只有标题 + 3 个简单卡片。每页标题要像汇报结论，而不是模块名。
+
+【视觉多样性（重点）】不要整套都是图标卡。卡片网格类版式（iconCards/featureGrid/capabilityGrid）合计不超过 2 页。要主动穿插业务图示类和数据/图示类版式让 PPT 有亮点：
+- 讲业务定位/系统全貌时优先用 businessOverview。
+- 讲用户操作与服务过程时优先用 userJourney / workflowDiagram。
+- 讲交付价值、收益、差异化时优先用 valueMatrix / bigNumbers / compareColumns。
+- 讲风险、权限、边界、运维保障时优先用 riskMap / compareTable。
 - 有可量化信息时用 barChart / lineTrend / proportion（如代码语言分布、各模块文件数占比、规模对比）或 progressBars（能力/成熟度评分）。
 - 讲系统结构时用 architecture（分层架构图），不要只用文字罗列。
 - 用 bigNumbers 放关键指标，compareColumns/compareTable 做对照，cycle 表达闭环，quote 提炼金句。
@@ -106,13 +117,13 @@ ${cfg.direction || '（未提供）'}
 # 目标页数
 ${pageCount}
 
-# 代码库 / 项目上下文
+# 业务分析 / 代码证据上下文
 ${contextSummary || '（无扫描上下文，请只写该领域通用、可验证、不臆造的内容）'}`
 
   return [{ role: 'system', content: system }, { role: 'user', content: user }]
 }
 
-const ALT_LAYOUTS = ['bullets', 'iconCards', 'featureGrid', 'timeline', 'bigNumbers', 'compareColumns', 'barChart', 'architecture', 'progressBars', 'capabilityGrid', 'lineTrend', 'proportion', 'cycle', 'compareTable']
+const ALT_LAYOUTS = ['businessOverview', 'userJourney', 'workflowDiagram', 'valueMatrix', 'riskMap', 'bullets', 'iconCards', 'featureGrid', 'timeline', 'bigNumbers', 'compareColumns', 'barChart', 'architecture', 'progressBars', 'capabilityGrid', 'lineTrend', 'proportion', 'cycle', 'compareTable']
 
 /** 把模型返回的大纲规整到合法、命中页数、首尾正确、相邻不重复 */
 export function normalizeOutline(parsed, cfg, lastStyleId = null) {
@@ -213,7 +224,7 @@ export function buildSlideMessages(slideOutline, contextSummary, cfg, prevTitles
   const language = cfg.language || '中文'
   const prevBlock = prevTitles.length ? `\n已生成页（避免重复）：\n${prevTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}\n` : ''
 
-  const system = `你在为一套 PPT 填充【某一页】的内容。该页版式 = "${layout.id}"（${layout.label}）。
+  const system = `你在为一套业务汇报 PPT 填充【某一页】的内容。该页版式 = "${layout.id}"（${layout.label}）。
 
 只输出 JSON，字段严格遵守该版式定义：
 ${layout.fields}
@@ -223,7 +234,10 @@ ${JSON.stringify(layout.sample)}
 
 规则：
 - 用 ${language}，文案精炼：一个要点一句话，标题有信息量。
-- 内容必须基于代码库/项目上下文，紧扣本页「意图」；不要凑字数。
+- 内容必须基于业务分析简报、汇报叙事与代码证据，紧扣本页「意图」；不要凑字数。
+- 面向业务受众表达：优先讲用户、场景、流程、能力、价值和风险；技术名词只作为支撑证据。
+- 对 businessOverview / userJourney / workflowDiagram / valueMatrix / riskMap 这类业务图示页，必须填满主要字段：每个节点要有动作、痛点/约束、收益/控制或触点，不要只给短标题。
+- 对 cards/items/steps/stages 这类数组，除非版式另有限制，优先给 4-5 项；描述要具体到业务行为或系统能力。
 - 严禁臆造数字、指标、客户名、引用。${layout.id === 'bigNumbers' || layout.id === 'compareTable' ? '若上下文没有真实数据，宁可用定性描述，不要编造数值。' : ''}
 - 图标名(icon)从这些英文键里选：database, server, cloud, shield, zap, layers, code, network, lock, users, settings, rocket, bar-chart, check, search, workflow, terminal, globe, smartphone, monitor, gauge, plug, key, folder, file-text, bell, refresh, target, grid, activity, lightbulb, message, clock, flag, star, cpu, git-branch。
 - 不要输出 JSON 以外的任何文字。`
@@ -237,7 +251,7 @@ ${slideOutline.intent || ''}
 # 主题 / 大方向
 ${cfg.topic || ''} / ${cfg.direction || ''}
 ${prevBlock}
-# 代码库 / 项目上下文
+# 业务分析 / 代码证据上下文
 ${contextSummary || '（无）'}`
 
   return [{ role: 'system', content: system }, { role: 'user', content: user }]

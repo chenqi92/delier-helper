@@ -144,6 +144,83 @@ function contentZone(hasNote) {
   return { x: MARGIN, y: HEADER_BOTTOM + 0.3, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.3 - (hasNote ? 0.95 : 0.5) }
 }
 
+/**
+ * 全局视觉精修层：让生成页不只是“干净摆放元素”，而有更完整的版面层次。
+ * 装饰元素都放在底层并标记 decor，保留文本/图表/形状的可编辑性。
+ */
+function visualPolish(layoutId, role, style, pageNo) {
+  const t = slideTheme(style, role)
+  const els = []
+  const ac = t.accentText || t.accent
+  const soft = t.onDark ? mix(t.bg, t.ink, 0.08) : mix(t.bg, t.accent, 0.06)
+  const softer = t.onDark ? mix(t.bg, t.ink, 0.045) : mix(t.bg, t.primary, 0.035)
+  const grid = t.onDark ? mix(t.bg, t.ink, 0.13) : mix(t.bg, t.ink, 0.88)
+
+  if (role === 'cover' || role === 'section' || role === 'closing') {
+    els.push(E.rect({ x: SLIDE_W - 0.12, y: 0, w: 0.12, h: SLIDE_H, fill: ac, fillAlpha: 0.75, decor: true }))
+    for (let i = 0; i < 9; i++) {
+      els.push(E.line({ x: SLIDE_W - 2.6 + i * 0.22, y: 0.28, w: 0.75, h: 0, lineColor: mix(ac, t.bg, 0.58), lineWidth: 0.55, rot: -35, decor: true }))
+    }
+    return els
+  }
+
+  const denseLayouts = new Set(['businessOverview', 'userJourney', 'workflowDiagram', 'valueMatrix', 'riskMap', 'architecture', 'barChart', 'lineTrend', 'proportion'])
+  const dense = denseLayouts.has(layoutId)
+
+  if (dense) {
+    for (let i = -8; i < 24; i++) {
+      els.push(E.line({ x: i * 0.72, y: 0.1, w: 2.9, h: SLIDE_H + 0.6, lineColor: grid, lineWidth: 0.35, rot: -18, decor: true }))
+    }
+    for (let x = 0.6; x < SLIDE_W; x += 1.2) {
+      els.push(E.line({ x, y: 0.95, w: 0, h: SLIDE_H - 1.72, lineColor: grid, lineWidth: 0.28, dash: 'dash', decor: true }))
+    }
+  }
+
+  els.push(E.rect({ x: 0, y: 0, w: SLIDE_W, h: 0.12, fill: ac, fillAlpha: t.onDark ? 0.45 : 0.25, decor: true }))
+  els.push(E.rect({ x: 0, y: SLIDE_H - 0.16, w: SLIDE_W, h: 0.16, fill: soft, decor: true }))
+  els.push(E.rect({ x: SLIDE_W - 0.2, y: 0, w: 0.2, h: SLIDE_H, fill: ac, fillAlpha: t.onDark ? 0.14 : 0.09, decor: true }))
+  els.push(E.roundRect({ x: SLIDE_W - 2.72, y: 0.42, w: 2.18, h: 0.54, radius: 0.04, fill: soft, decor: true }))
+  els.push(E.text({ x: SLIDE_W - 2.62, y: 0.48, w: 1.96, h: 0.34, text: String(pageNo || '').padStart(2, '0'), align: 'right', fontFace: style.fonts.title, fontSize: 18, bold: true, color: mix(t.muted, t.bg, 0.42), decor: true }))
+  els.push(E.line({ x: 0.62, y: 1.42, w: SLIDE_W - 1.24, h: 0, lineColor: mix(ac, t.bg, t.onDark ? 0.35 : 0.5), lineWidth: 0.8, dash: 'dash', decor: true }))
+
+  const dotX = dense ? SLIDE_W - 2.55 : SLIDE_W - 2.2
+  const dotY = dense ? SLIDE_H - 1.2 : SLIDE_H - 1.05
+  const dotCols = dense ? 9 : 7
+  const dotRows = dense ? 5 : 4
+  for (let r = 0; r < dotRows; r++) {
+    for (let c = 0; c < dotCols; c++) {
+      els.push(E.ellipse({ x: dotX + c * 0.16, y: dotY + r * 0.14, w: 0.035, h: 0.035, fill: ac, fillAlpha: t.onDark ? 0.32 : 0.22, decor: true }))
+    }
+  }
+
+  if (style.motif === 'block') {
+    els.push(E.rect({ x: -0.6, y: SLIDE_H - 1.65, w: 4.1, h: 0.42, fill: t.secondary, fillAlpha: 0.35, rot: -7, decor: true }))
+    els.push(E.rect({ x: SLIDE_W - 4.15, y: 1.28, w: 4.65, h: 0.34, fill: ac, fillAlpha: 0.18, rot: 6, decor: true }))
+  } else if (style.motif === 'hairline' || style.motif === 'serif-big') {
+    els.push(E.rect({ x: 0.38, y: 0.38, w: SLIDE_W - 0.76, h: SLIDE_H - 0.76, fill: null, line: { color: mix(t.line, t.bg, 0.35), width: 0.55 }, decor: true }))
+    els.push(E.line({ x: 0.62, y: SLIDE_H - 0.68, w: 2.0, h: 0, lineColor: mix(ac, t.bg, 0.4), lineWidth: 1.1, decor: true }))
+  } else {
+    els.push(E.ellipse({ x: SLIDE_W - 2.05, y: SLIDE_H - 1.58, w: 2.9, h: 2.9, fill: softer, decor: true }))
+    els.push(E.ellipse({ x: -1.05, y: SLIDE_H - 1.45, w: 2.15, h: 2.15, fill: ac, fillAlpha: t.onDark ? 0.08 : 0.055, decor: true }))
+  }
+
+  if (dense) {
+    const corner = mix(ac, t.bg, 0.18)
+    const cw = 0.48
+    ;[
+      [0.42, 0.42, 1, 1],
+      [SLIDE_W - 0.9, 0.42, -1, 1],
+      [0.42, SLIDE_H - 0.9, 1, -1],
+      [SLIDE_W - 0.9, SLIDE_H - 0.9, -1, -1],
+    ].forEach(([x, y, sx, sy]) => {
+      els.push(E.line({ x, y, w: cw * sx, h: 0, lineColor: corner, lineWidth: 1.1, decor: true }))
+      els.push(E.line({ x, y, w: 0, h: cw * sy, lineColor: corner, lineWidth: 1.1, decor: true }))
+    })
+  }
+
+  return els
+}
+
 // 媒体占位框（无真实图片时）
 function mediaPlaceholder(theme, style, box, icon, caption) {
   const els = []
@@ -330,6 +407,208 @@ export const LAYOUTS = [
         els.push(E.text({ x: cx + 0.8, y, w: cw - 0.9, h: rowH, text: it, fontFace: style.fonts.body, fontSize: 16, color: t.ink, valign: 'middle' }))
         els.push(E.line({ x: cx + 0.8, y: y + rowH - 0.06, w: cw - 0.9, h: 0, lineColor: t.line, lineWidth: 0.75 }))
       })
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'businessOverview', label: '业务全景', role: 'content',
+    fields: 'kicker, title, positioning(一句话业务定位), users(目标用户/角色数组 2-5 个), capabilities(3-5 项，每项 {icon, name, desc}), value(底部业务价值一句话，可选)',
+    sample: { kicker: '业务全景', title: '系统业务定位', positioning: '围绕核心业务流程，提供统一入口、自动化处理与可追溯交付。', users: ['业务人员', '管理人员', '运维人员'], capabilities: [{ icon: 'users', name: '统一入口', desc: '集中承载用户日常操作' }, { icon: 'workflow', name: '流程协同', desc: '串联关键业务步骤' }, { icon: 'bar-chart', name: '结果沉淀', desc: '形成可复用数据资产' }], value: '让业务从分散处理走向标准化、自动化与可度量。' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.25, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.72 }
+      const leftW = 4.25
+      els.push(E.roundRect({ x: box.x, y: box.y, w: leftW, h: box.h, radius: style.radius, fill: t.onDark ? mix(t.card, t.accent, 0.1) : mix(t.card, t.accent, 0.04), line: { color: t.line, width: 1 }, shadow: !t.onDark }))
+      els.push(E.text({ x: box.x + 0.34, y: box.y + 0.35, w: leftW - 0.68, h: 1.25, text: content.positioning || '', fontFace: style.fonts.title, fontSize: 19, bold: true, color: t.cardInk, lineSpacing: 24, shrink: true }))
+      const users = (content.users || []).slice(0, 5)
+      users.forEach((u, i) => {
+        const y = box.y + 1.85 + i * 0.46
+        els.push(E.roundRect({ x: box.x + 0.34, y, w: leftW - 0.68, h: 0.34, radius: 0.17, fill: t.accent, fillAlpha: i === 0 ? 1 : 0.14 }))
+        els.push(E.text({ x: box.x + 0.5, y, w: leftW - 1.0, h: 0.34, text: u, fontFace: style.fonts.body, fontSize: 11.5, bold: true, color: i === 0 ? pickInk(t.accent) : t.accent, valign: 'middle', shrink: true }))
+      })
+      if (content.value) els.push(E.text({ x: box.x + 0.34, y: box.y + box.h - 0.85, w: leftW - 0.68, h: 0.5, text: content.value, fontFace: style.fonts.body, fontSize: 12, italic: true, color: t.muted, lineSpacing: 16, shrink: true }))
+
+      const caps = (content.capabilities || []).slice(0, 5)
+      const right = { x: box.x + leftW + 0.42, y: box.y, w: box.w - leftW - 0.42, h: box.h }
+      const cells = caps.length <= 3
+        ? gridCells(right, caps.length || 1, 1, GUTTER)
+        : gridCells(right, caps.length === 4 ? 2 : 3, caps.length === 4 ? 2 : 2, GUTTER)
+      const accents = ACCENTS(t, style)
+      caps.forEach((c, i) => {
+        const cell = cells[i]
+        if (!cell) return
+        const ac = accents[i % accents.length]
+        els.push(E.roundRect({ ...cell, radius: style.radius, fill: t.card, line: { color: mix(t.line, ac, 0.25), width: 1 }, shadow: !t.onDark }))
+        els.push(...chipIcon(cell.x + 0.48, cell.y + 0.5, 0.58, { icon: c.icon || 'target', glyph: pickInk(ac), fill: ac, round: style.motif !== 'block' }))
+        els.push(E.text({ x: cell.x + 0.88, y: cell.y + 0.28, w: cell.w - 1.08, h: 0.42, text: c.name || '', fontFace: style.fonts.title, fontSize: 13.5, bold: true, color: t.cardInk, valign: 'middle', shrink: true }))
+        els.push(E.text({ x: cell.x + 0.28, y: cell.y + 0.9, w: cell.w - 0.56, h: cell.h - 1.08, text: c.desc || '', fontFace: style.fonts.body, fontSize: 11.2, color: mix(t.cardInk, t.card, 0.28), lineSpacing: 15, wrap: true }))
+      })
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'userJourney', label: '用户旅程', role: 'content',
+    fields: 'kicker, title, persona(用户/角色), goal(该角色目标，可选), stages(3-5 个阶段，每项 {name, action, pain, value, touchpoint(触点/系统能力，可选)})',
+    sample: { kicker: '用户旅程', title: '关键角色使用路径', persona: '业务人员', stages: [{ name: '进入', action: '选择业务场景', pain: '入口分散', value: '统一入口' }, { name: '处理', action: '完成核心操作', pain: '手工重复', value: '自动化' }, { name: '复核', action: '查看结果与记录', pain: '追踪困难', value: '可追溯' }] },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const stages = (content.stages || []).slice(0, 5)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.24, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.72 }
+      const accents = ACCENTS(t, style)
+      const sideW = 2.38
+      const railX = box.x + sideW + 0.34
+      const railW = box.w - sideW - 0.34
+      const stageCount = Math.max(stages.length, 1)
+      const cols = splitCols(stageCount, { x: railX, w: railW, gutter: 0.18 })
+      const personaFill = t.onDark ? mix(t.card, t.accent, 0.16) : mix(t.card, t.accent, 0.06)
+
+      els.push(E.roundRect({ x: box.x, y: box.y, w: sideW, h: box.h, radius: style.radius, fill: personaFill, line: { color: mix(t.line, t.accent, 0.35), width: 1.1 }, shadow: !t.onDark }))
+      els.push(E.text({ x: box.x + 0.24, y: box.y + 0.25, w: sideW - 0.48, h: 0.28, text: 'PERSONA', fontFace: style.fonts.body, fontSize: 9.5, bold: true, color: t.accent, charSpacing: 2 }))
+      els.push(...chipIcon(box.x + sideW / 2, box.y + 0.95, 0.86, { icon: 'users', glyph: pickInk(t.accent), fill: t.accent, round: style.motif !== 'block' }))
+      els.push(E.text({ x: box.x + 0.22, y: box.y + 1.48, w: sideW - 0.44, h: 0.46, text: content.persona || '关键角色', align: 'center', fontFace: style.fonts.title, fontSize: 15.5, bold: true, color: t.ink, shrink: true }))
+      els.push(E.rect({ x: box.x + 0.32, y: box.y + 2.1, w: sideW - 0.64, h: 0.06, fill: t.accent }))
+      els.push(E.text({ x: box.x + 0.26, y: box.y + 2.34, w: sideW - 0.52, h: 0.86, text: content.goal || '围绕核心任务完成业务处理，并获得可追溯的交付结果。', fontFace: style.fonts.body, fontSize: 10.8, color: t.muted, lineSpacing: 14, shrink: true }))
+      els.push(E.roundRect({ x: box.x + 0.24, y: box.y + box.h - 0.72, w: sideW - 0.48, h: 0.42, radius: 0.2, fill: t.accent, fillAlpha: 0.14 }))
+      els.push(E.text({ x: box.x + 0.34, y: box.y + box.h - 0.72, w: sideW - 0.68, h: 0.42, text: `${stageCount} 个触点闭环`, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 10.5, bold: true, color: t.accent, shrink: true }))
+
+      const nodeY = box.y + 0.7
+      els.push(E.line({ x: cols[0].x + cols[0].w / 2, y: nodeY, w: railW - cols[0].w, h: 0, lineColor: mix(t.line, t.accent, 0.18), lineWidth: 1.2, dash: 'dash' }))
+      stages.forEach((s, i) => {
+        const col = cols[i]
+        const ac = accents[i % accents.length]
+        const cx = col.x + col.w / 2
+        els.push(E.ellipse({ x: cx - 0.24, y: nodeY - 0.24, w: 0.48, h: 0.48, fill: ac, line: { color: mix(ac, t.bg, 0.12), width: 1.2 }, shadow: !t.onDark }))
+        els.push(E.text({ x: cx - 0.24, y: nodeY - 0.24, w: 0.48, h: 0.48, text: String(i + 1), align: 'center', valign: 'middle', fontFace: style.fonts.title, fontSize: 12.5, bold: true, color: pickInk(ac) }))
+        els.push(E.text({ x: col.x, y: nodeY + 0.34, w: col.w, h: 0.35, text: s.name || '', align: 'center', fontFace: style.fonts.title, fontSize: 13.2, bold: true, color: t.ink, shrink: true }))
+
+        const laneTop = box.y + 1.48
+        const laneH = 0.86
+        const laneGap = 0.18
+        const rows = [
+          { label: '动作', text: s.action || '', icon: 'activity', fill: t.card, color: t.cardInk },
+          { label: '痛点', text: s.pain || '待优化', icon: 'bell', fill: t.onDark ? mix(t.card, 'EF4444', 0.08) : mix(t.card, 'EF4444', 0.035), color: t.cardInk },
+          { label: '收益', text: s.value || '效率提升', icon: 'check', fill: t.onDark ? mix(t.card, ac, 0.12) : mix(t.card, ac, 0.055), color: t.cardInk },
+        ]
+        rows.forEach((row, r) => {
+          const y = laneTop + r * (laneH + laneGap)
+          els.push(E.roundRect({ x: col.x, y, w: col.w, h: laneH, radius: 0.08, fill: row.fill, line: { color: r === 1 ? mix('EF4444', t.line, 0.25) : mix(ac, t.line, 0.25), width: 0.8 }, shadow: !t.onDark && r === 2 }))
+          els.push(E.roundRect({ x: col.x + 0.14, y: y + 0.15, w: 0.62, h: 0.25, radius: 0.12, fill: r === 1 ? 'EF4444' : ac, fillAlpha: r === 0 ? 0.16 : 0.2 }))
+          els.push(E.text({ x: col.x + 0.18, y: y + 0.15, w: 0.54, h: 0.25, text: row.label, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 8.5, bold: true, color: r === 1 ? 'F87171' : ac, shrink: true }))
+          els.push(E.text({ x: col.x + 0.18, y: y + 0.43, w: col.w - 0.36, h: 0.34, text: row.text, fontFace: style.fonts.body, fontSize: 10.2, color: row.color, lineSpacing: 13, shrink: true }))
+        })
+
+        const touch = s.touchpoint || s.value || '系统支撑'
+        els.push(E.roundRect({ x: col.x, y: box.y + box.h - 0.52, w: col.w, h: 0.34, radius: 0.16, fill: ac, fillAlpha: 0.18 }))
+        els.push(E.text({ x: col.x + 0.12, y: box.y + box.h - 0.52, w: col.w - 0.24, h: 0.34, text: touch, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 9.6, bold: true, color: ac, shrink: true }))
+      })
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'workflowDiagram', label: '业务流程图', role: 'content',
+    fields: 'kicker, title, steps(4-6 个步骤，每项 {icon, name, desc, owner, output(产出，可选)}), note(一句流程价值/闭环说明，可选)',
+    sample: { kicker: '流程', title: '端到端业务闭环', steps: [{ icon: 'search', name: '采集', desc: '获取业务输入', owner: '用户' }, { icon: 'settings', name: '处理', desc: '自动完成规则处理', owner: '系统' }, { icon: 'check', name: '交付', desc: '输出可追溯结果', owner: '平台' }], note: '流程从输入到交付形成闭环。' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const steps = (content.steps || []).slice(0, 6)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.35, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - (content.note ? 1.08 : 0.72) }
+      const cols = splitCols(Math.max(steps.length, 1), { x: box.x, w: box.w, gutter: 0.14 })
+      const accents = ACCENTS(t, style)
+      const railY = box.y + 0.58
+      const panelY = box.y + 1.18
+      const panelH = box.h - 1.18
+      els.push(E.roundRect({ x: box.x, y: railY - 0.1, w: box.w, h: 0.2, radius: 0.1, fill: t.line, fillAlpha: t.onDark ? 0.55 : 1 }))
+      steps.forEach((s, i) => {
+        const col = cols[i]
+        const ac = accents[i % accents.length]
+        const cx = col.x + col.w / 2
+        els.push(E.ellipse({ x: cx - 0.34, y: railY - 0.34, w: 0.68, h: 0.68, fill: ac, line: { color: mix(ac, t.bg, 0.08), width: 1.4 }, shadow: !t.onDark }))
+        els.push(E.icon({ x: cx - 0.18, y: railY - 0.18, w: 0.36, h: 0.36, name: s.icon || 'workflow', color: pickInk(ac), strokeWidth: 2.2 }))
+        if (i < steps.length - 1) {
+          els.push(E.text({ x: col.x + col.w - 0.1, y: railY - 0.22, w: 0.42, h: 0.44, text: '>', align: 'center', valign: 'middle', fontFace: style.fonts.title, fontSize: 16, bold: true, color: mix(t.ink, t.bg, 0.42) }))
+        }
+        els.push(E.roundRect({ x: col.x, y: panelY, w: col.w, h: panelH, radius: style.radius, fill: t.card, line: { color: mix(t.line, ac, 0.32), width: 1 }, shadow: !t.onDark }))
+        els.push(E.rect({ x: col.x, y: panelY, w: col.w, h: 0.09, fill: ac }))
+        if (s.owner) {
+          els.push(E.roundRect({ x: col.x + 0.16, y: panelY + 0.26, w: col.w - 0.32, h: 0.28, radius: 0.14, fill: ac, fillAlpha: 0.14 }))
+          els.push(E.text({ x: col.x + 0.22, y: panelY + 0.26, w: col.w - 0.44, h: 0.28, text: s.owner, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 9.4, bold: true, color: ac, shrink: true }))
+        }
+        els.push(E.text({ x: col.x + 0.18, y: panelY + 0.68, w: col.w - 0.36, h: 0.42, text: s.name || '', align: 'center', fontFace: style.fonts.title, fontSize: 13.2, bold: true, color: t.cardInk, shrink: true }))
+        els.push(E.text({ x: col.x + 0.18, y: panelY + 1.18, w: col.w - 0.36, h: 0.92, text: s.desc || '', align: 'center', fontFace: style.fonts.body, fontSize: 10.2, color: mix(t.cardInk, t.card, 0.25), lineSpacing: 13, shrink: true }))
+        els.push(E.line({ x: col.x + 0.22, y: panelY + panelH - 0.76, w: col.w - 0.44, h: 0, lineColor: mix(t.line, ac, 0.25), lineWidth: 0.6 }))
+        els.push(E.text({ x: col.x + 0.2, y: panelY + panelH - 0.62, w: col.w - 0.4, h: 0.36, text: s.output || s.name || '阶段产出', align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 9.6, bold: true, color: ac, shrink: true }))
+      })
+      if (content.note) els.push(E.text({ x: box.x, y: SLIDE_H - 0.92, w: box.w, h: 0.42, text: content.note, fontFace: style.fonts.body, fontSize: 12, italic: true, color: t.muted }))
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'valueMatrix', label: '价值矩阵', role: 'content',
+    fields: 'kicker, title, items(3-6 项，每项 {value(价值点), forWhom(面向对象), proof(代码/功能证据或实现方式), impact(影响，可定性)}), note(可选)',
+    sample: { kicker: '价值', title: '业务价值矩阵', items: [{ value: '提效', forWhom: '业务人员', proof: '自动生成交付材料', impact: '减少重复编写' }, { value: '标准化', forWhom: '项目团队', proof: '统一模板与导出格式', impact: '降低交付偏差' }, { value: '可追溯', forWhom: '管理人员', proof: '保留上下文与结果', impact: '便于复核' }], note: '' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const items = (content.items || []).slice(0, 6)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.28, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - (content.note ? 1.0 : 0.65) }
+      const cols = items.length <= 3 ? items.length || 1 : 3
+      const rows = Math.ceil(items.length / cols)
+      const cells = gridCells(box, cols, rows, 0.24)
+      const accents = ACCENTS(t, style)
+      items.forEach((it, i) => {
+        const cell = cells[i]
+        const ac = accents[i % accents.length]
+        els.push(E.roundRect({ ...cell, radius: style.radius, fill: t.card, line: { color: mix(t.line, ac, 0.2), width: 1 }, shadow: !t.onDark }))
+        els.push(E.rect({ x: cell.x, y: cell.y, w: cell.w, h: 0.1, fill: ac }))
+        els.push(E.text({ x: cell.x + 0.22, y: cell.y + 0.28, w: cell.w - 0.44, h: 0.46, text: it.value || '', fontFace: style.fonts.title, fontSize: 15.5, bold: true, color: t.cardInk, shrink: true }))
+        if (it.forWhom) els.push(E.text({ x: cell.x + 0.22, y: cell.y + 0.78, w: cell.w - 0.44, h: 0.28, text: it.forWhom, fontFace: style.fonts.body, fontSize: 10.5, bold: true, color: ac, shrink: true }))
+        els.push(E.text({ x: cell.x + 0.22, y: cell.y + 1.18, w: cell.w - 0.44, h: 0.72, text: it.proof || '', fontFace: style.fonts.body, fontSize: 10.8, color: mix(t.cardInk, t.card, 0.22), lineSpacing: 14, shrink: true }))
+        if (it.impact) {
+          els.push(E.roundRect({ x: cell.x + 0.22, y: cell.y + cell.h - 0.55, w: cell.w - 0.44, h: 0.32, radius: 0.16, fill: ac, fillAlpha: 0.13 }))
+          els.push(E.text({ x: cell.x + 0.32, y: cell.y + cell.h - 0.55, w: cell.w - 0.64, h: 0.32, text: it.impact, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 10, bold: true, color: ac, shrink: true }))
+        }
+      })
+      if (content.note) els.push(E.text({ x: box.x, y: SLIDE_H - 0.9, w: box.w, h: 0.36, text: content.note, fontFace: style.fonts.body, fontSize: 11.5, italic: true, color: t.muted }))
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'riskMap', label: '风险控制', role: 'content',
+    fields: 'kicker, title, items(3-6 项，每项 {risk, control, level(高/中/低 或 high/medium/low)}), note(可选)',
+    sample: { kicker: '保障', title: '风险与控制措施', items: [{ risk: '业务规则不完整', control: '依赖用户补充需求文档与截图', level: '中' }, { risk: '数据安全要求', control: '通过权限和本地配置控制访问', level: '高' }, { risk: '生成内容偏差', control: '保留人工编辑与重生成入口', level: '中' }], note: '' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const items = (content.items || []).slice(0, 6)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.26, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - (content.note ? 1.02 : 0.65) }
+      const rowH = box.h / Math.max(items.length + 1, 2)
+      const cols = [2.05, 4.45, box.w - 2.05 - 4.45]
+      const headFill = t.accent
+      els.push(E.roundRect({ x: box.x, y: box.y, w: box.w, h: rowH, radius: style.radius, fill: headFill }))
+      ;['等级', '风险点', '控制措施'].forEach((h, i) => {
+        const x = box.x + cols.slice(0, i).reduce((a, b) => a + b, 0)
+        els.push(E.text({ x: x + 0.16, y: box.y, w: cols[i] - 0.24, h: rowH, text: h, valign: 'middle', fontFace: style.fonts.title, fontSize: 12.5, bold: true, color: pickInk(headFill) }))
+      })
+      items.forEach((it, r) => {
+        const y = box.y + rowH * (r + 1)
+        const level = String(it.level || '中').toLowerCase()
+        const ac = /高|high/.test(level) ? 'EF4444' : /低|low/.test(level) ? '22C55E' : t.accent
+        els.push(E.rect({ x: box.x, y, w: box.w, h: rowH, fill: r % 2 ? mix(t.card, t.accent, 0.04) : t.card, fillAlpha: t.onDark ? 0.7 : 1 }))
+        els.push(E.roundRect({ x: box.x + 0.18, y: y + rowH / 2 - 0.16, w: 1.18, h: 0.32, radius: 0.16, fill: ac, fillAlpha: 0.16 }))
+        els.push(E.text({ x: box.x + 0.18, y: y + rowH / 2 - 0.16, w: 1.18, h: 0.32, text: it.level || '中', align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 10.5, bold: true, color: ac }))
+        els.push(E.text({ x: box.x + cols[0] + 0.16, y, w: cols[1] - 0.24, h: rowH, text: it.risk || '', valign: 'middle', fontFace: style.fonts.body, fontSize: 11.5, bold: true, color: t.cardInk, shrink: true }))
+        els.push(E.text({ x: box.x + cols[0] + cols[1] + 0.16, y, w: cols[2] - 0.24, h: rowH, text: it.control || '', valign: 'middle', fontFace: style.fonts.body, fontSize: 11.2, color: mix(t.cardInk, t.card, 0.22), shrink: true }))
+        els.push(E.line({ x: box.x, y: y + rowH, w: box.w, h: 0, lineColor: t.line, lineWidth: 0.5 }))
+      })
+      if (content.note) els.push(E.text({ x: box.x, y: SLIDE_H - 0.9, w: box.w, h: 0.36, text: content.note, fontFace: style.fonts.body, fontSize: 11.5, italic: true, color: t.muted }))
       return { background: bg(t), elements: els }
     },
   },
@@ -777,6 +1056,7 @@ export function buildSlide(layoutId, content, style, pageNo) {
   } catch (e) {
     out = LAYOUT_MAP.bullets.build({ title: content?.title || '内容', bullets: ['（该页渲染失败，请重试或编辑）'] }, style, pageNo)
   }
+  const polish = visualPolish(layout.id, layout.role, style, pageNo)
   return {
     id: `sld_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e5).toString(36)}`,
     role: layout.role,
@@ -784,7 +1064,7 @@ export function buildSlide(layoutId, content, style, pageNo) {
     title: content?.title || layout.label,
     content: content || {},
     background: out.background,
-    elements: out.elements,
+    elements: [...polish, ...(out.elements || [])],
     notes: content?.notes || '',
   }
 }

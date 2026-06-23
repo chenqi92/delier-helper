@@ -20,6 +20,11 @@ const CONFIG_FILES = [
     'webpack.config.js', 'next.config.js',
 ]
 
+const README_FILES = new Set([
+    'README.md', 'README.MD', 'readme.md', 'Readme.md',
+    'README.zh-CN.md', 'README_CN.md', 'CHANGELOG.md',
+])
+
 /**
  * 代码文件扩展名 → 语言映射
  */
@@ -66,6 +71,17 @@ const MAX_DEPTH = 6
  */
 const MAX_FILES = 2000
 
+const MAX_README_FILES = 6
+const MAX_KEY_FILES = 90
+const MAX_BUSINESS_ITEMS = 120
+const MAX_SOURCE_CHARS = 14000
+const MAX_SNIPPET_CHARS = 4200
+
+const SOURCE_EXTS = new Set([
+    '.java', '.kt', '.js', '.ts', '.jsx', '.tsx', '.vue', '.py', '.go', '.rs',
+    '.php', '.cs', '.sql', '.xml', '.yaml', '.yml', '.json',
+])
+
 /**
  * 扫描单个代码库目录
  * @param {string} dirPath - 目录绝对路径
@@ -82,6 +98,18 @@ export async function scanCodebase(dirPaths) {
         configs: [],         // 配置文件内容 [{name, path, content}]
         modules: [],         // 发现的模块 [{name, path, description}]
         codeSnippets: [],    // 关键代码片段（供 LLM 分析）
+        readmes: [],         // README / 说明文档摘要
+        business: {
+            pages: [],           // 前端页面 / 菜单 / 视图线索
+            routes: [],          // 前端路由 / 页面路径
+            apiEndpoints: [],    // 后端接口 / HTTP 路由
+            commands: [],        // Tauri / CLI / 后台命令
+            domainModels: [],    // 领域对象 / DTO / Entity
+            databaseTables: [],  // 数据库表
+            workflows: [],       // 从命名和文案中抽取的流程词
+            integrations: [],    // 外部依赖 / 中间件 / 第三方集成
+            keyFiles: [],        // 对业务判断有贡献的文件
+        },
     }
 
     for (const dirPath of (Array.isArray(dirPaths) ? dirPaths : [dirPaths])) {
@@ -100,6 +128,7 @@ export async function scanCodebase(dirPaths) {
 
     // 发现模块（根据目录结构推断）
     discoverModules(results)
+    normalizeBusinessSignals(results)
 
     return results
 }
@@ -170,6 +199,8 @@ async function scanDirectory(basePath, relativePath, depth, results) {
                 }
             }
 
+            await collectBusinessSignal(entryRelPath, entryFullPath, entry.name, ext, results)
+
             tree.push({
                 name: entry.name,
                 path: entryRelPath,
@@ -179,6 +210,349 @@ async function scanDirectory(basePath, relativePath, depth, results) {
     }
 
     return tree
+}
+
+async function collectBusinessSignal(relativePath, fullPath, fileName, ext, results) {
+    const isReadme = README_FILES.has(fileName) || /^readme(\.|$)/i.test(fileName)
+
+    if (isReadme && results.readmes.length < MAX_README_FILES) {
+        try {
+            const content = await readTextFile(fullPath)
+            results.readmes.push({
+                name: fileName,
+                path: relativePath,
+                content: trimText(content, MAX_SNIPPET_CHARS),
+            })
+        } catch (e) {}
+    }
+
+    if (!shouldInspectBusinessFile(relativePath, fileName, ext)) return
+    if (results.business.keyFiles.length >= MAX_KEY_FILES) return
+
+    let content = ''
+    try {
+        content = await readTextFile(fullPath)
+    } catch (e) {
+        return
+    }
+
+    const limited = trimText(content, MAX_SOURCE_CHARS)
+    const signal = analyzeBusinessFile(relativePath, fileName, ext, limited)
+    if (!hasBusinessSignal(signal)) return
+
+    pushUniqueObject(results.business.keyFiles, {
+        path: relativePath,
+        role: signal.role,
+        signals: signal.summary,
+    }, 'path', MAX_KEY_FILES)
+
+    for (const item of signal.pages) pushUniqueObject(results.business.pages, item, 'key', MAX_BUSINESS_ITEMS)
+    for (const item of signal.routes) pushUniqueObject(results.business.routes, item, 'key', MAX_BUSINESS_ITEMS)
+    for (const item of signal.apiEndpoints) pushUniqueObject(results.business.apiEndpoints, item, 'key', MAX_BUSINESS_ITEMS)
+    for (const item of signal.commands) pushUniqueObject(results.business.commands, item, 'key', MAX_BUSINESS_ITEMS)
+    for (const item of signal.domainModels) pushUniqueObject(results.business.domainModels, item, 'key', MAX_BUSINESS_ITEMS)
+    for (const item of signal.databaseTables) pushUniqueObject(results.business.databaseTables, item, 'key', MAX_BUSINESS_ITEMS)
+    for (const item of signal.workflows) pushUniqueObject(results.business.workflows, item, 'key', MAX_BUSINESS_ITEMS)
+    for (const item of signal.integrations) pushUniqueObject(results.business.integrations, item, 'key', MAX_BUSINESS_ITEMS)
+
+    results.codeSnippets.push({
+        path: relativePath,
+        language: LANG_MAP[ext] || ext?.replace('.', '').toUpperCase() || 'Text',
+        reason: signal.role,
+        content: trimText(content, MAX_SNIPPET_CHARS),
+    })
+}
+
+function shouldInspectBusinessFile(relativePath, fileName, ext) {
+    const lower = relativePath.toLowerCase()
+    if (README_FILES.has(fileName) || /^readme(\.|$)/i.test(fileName)) return true
+    if (CONFIG_FILES.includes(fileName)) return true
+    if (!SOURCE_EXTS.has(ext)) return false
+    if (/\.(lock|min\.js|min\.css|map)$/i.test(fileName)) return false
+    if (/(^|\/)(test|tests|spec|__tests__|mock|mocks)(\/|$)/i.test(lower)) return false
+    return /(router|route|routes|menu|nav|view|views|page|pages|screen|controller|service|entity|entities|model|models|dto|vo|po|mapper|repository|schema|migration|sql|command|commands|api|store|workflow|process|permission|role|user|account|order|task|project|device|alarm|report|dashboard|manage|management|system|tauri|main|lib)/i.test(lower)
+}
+
+function analyzeBusinessFile(path, fileName, ext, content) {
+    const lower = path.toLowerCase()
+    const role = guessBusinessFileRole(path, fileName)
+    const labels = extractLabels(content)
+    const routes = extractRoutes(content, path)
+    const apiEndpoints = extractApiEndpoints(content, path)
+    const commands = extractCommands(content, path)
+    const domainModels = extractDomainModels(content, path)
+    const databaseTables = extractDatabaseTables(content, path)
+    const integrations = extractIntegrations(content, path, fileName)
+    const workflows = extractWorkflowWords(content, path, labels)
+    const pages = []
+
+    if (/\.(vue|tsx|jsx|html)$/i.test(fileName) || /(views|pages|screen|dashboard)/i.test(lower)) {
+        const pageName = bestPageName(path, labels)
+        if (pageName) {
+            pages.push({
+                key: `${path}|${pageName}`,
+                name: pageName,
+                path,
+                evidence: labels.slice(0, 5),
+            })
+        }
+    }
+
+    const summary = [
+        labels.length ? `页面/文案: ${labels.slice(0, 4).join('、')}` : '',
+        routes.length ? `路由: ${routes.slice(0, 3).map(r => r.path).join('、')}` : '',
+        apiEndpoints.length ? `接口: ${apiEndpoints.slice(0, 3).map(a => `${a.method} ${a.path}`).join('、')}` : '',
+        domainModels.length ? `对象: ${domainModels.slice(0, 4).map(m => m.name).join('、')}` : '',
+        databaseTables.length ? `数据表: ${databaseTables.slice(0, 4).map(t => t.name).join('、')}` : '',
+        commands.length ? `命令: ${commands.slice(0, 4).map(c => c.name).join('、')}` : '',
+    ].filter(Boolean)
+
+    return { role, labels, pages, routes, apiEndpoints, commands, domainModels, databaseTables, workflows, integrations, summary }
+}
+
+function guessBusinessFileRole(path, fileName) {
+    const lower = path.toLowerCase()
+    if (/readme/i.test(fileName)) return '项目说明'
+    if (/package\.json|pom\.xml|cargo\.toml|go\.mod|requirements\.txt|pyproject\.toml/i.test(fileName)) return '依赖与技术栈'
+    if (/(router|route|routes|menu|nav)/i.test(lower)) return '路由与菜单'
+    if (/(view|views|page|pages|screen|dashboard)/i.test(lower)) return '用户界面'
+    if (/(controller|handler|api|router|routes)/i.test(lower)) return '业务接口'
+    if (/(service|workflow|process)/i.test(lower)) return '业务流程'
+    if (/(entity|entities|model|models|dto|vo|po|schema)/i.test(lower)) return '领域模型'
+    if (/(mapper|repository|dao|migration|sql)/i.test(lower)) return '数据访问'
+    if (/(command|commands|tauri|main|lib)/i.test(lower)) return '本地能力/命令'
+    return '关键业务文件'
+}
+
+function extractLabels(content) {
+    const labels = []
+    const patterns = [
+        /(?:title|label|name|menuName|displayName|text|caption)\s*[:=]\s*['"`]([^'"`\n]{2,40})['"`]/g,
+        /<h[1-4][^>]*>([^<]{2,40})<\/h[1-4]>/g,
+        />([\u4e00-\u9fa5][^<>{}\n]{1,28})</g,
+    ]
+    for (const re of patterns) {
+        let m
+        while ((m = re.exec(content)) && labels.length < 40) {
+            const v = cleanLabel(m[1])
+            if (v && isBusinessLabel(v)) labels.push(v)
+        }
+    }
+    return uniqueStrings(labels).slice(0, 30)
+}
+
+function extractRoutes(content, path) {
+    const routes = []
+    const patterns = [
+        /path\s*:\s*['"`]([^'"`\n]+)['"`]/g,
+        /(?:router|routes)\.(?:push|addRoute)\s*\(\s*['"`]([^'"`\n]+)['"`]/g,
+        /(?:navigateTo|useNavigate)\s*\(\s*['"`]([^'"`\n]+)['"`]/g,
+    ]
+    for (const re of patterns) {
+        let m
+        while ((m = re.exec(content)) && routes.length < 50) {
+            const route = normalizeRoute(m[1])
+            if (route) routes.push({ key: `${path}|${route}`, path: route, source: path })
+        }
+    }
+    return routes
+}
+
+function extractApiEndpoints(content, path) {
+    const endpoints = []
+    const patterns = [
+        { type: 'spring-method', re: /@(Get|Post|Put|Delete|Patch)Mapping\s*\(\s*(?:value\s*=\s*)?["']([^"']*)["']/g },
+        { type: 'spring-request', re: /@RequestMapping\s*\(\s*(?:value\s*=\s*)?["']([^"']*)["']/g },
+        { type: 'node-route', re: /(?:router|app|server)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`\n]+)['"`]/gi },
+        { type: 'flask-route', re: /@(?:app|bp)\.route\s*\(\s*['"`]([^'"`\n]+)['"`](?:[^)]*methods\s*=\s*\[([^\]]+)\])?/g },
+        { type: 'fetch', re: /fetch\s*\(\s*['"`]([^'"`\n]+)['"`]/g },
+        { type: 'http-client', re: /(?:axios|http|request)\.(get|post|put|delete|patch)\s*\(\s*['"`]([^'"`\n]+)['"`]/gi },
+    ]
+
+    for (const { type, re } of patterns) {
+        let m
+        while ((m = re.exec(content)) && endpoints.length < 80) {
+            let method = 'GET'
+            let route = ''
+            if (type === 'spring-request') {
+                route = m[1]
+            } else if (type === 'flask-route') {
+                route = m[1]
+                method = (m[2] || 'GET').replace(/['"\s]/g, '').split(',')[0] || 'GET'
+            } else if (type === 'fetch') {
+                route = m[1]
+            } else if (m[2]) {
+                method = m[1] || 'GET'
+                route = m[2]
+            } else {
+                route = m[1]
+            }
+            route = normalizeRoute(route)
+            if (route) endpoints.push({ key: `${String(method).toUpperCase()} ${route}|${path}`, method: String(method).toUpperCase(), path: route, source: path })
+        }
+    }
+    return endpoints
+}
+
+function extractCommands(content, path) {
+    const commands = []
+    let m
+    const tauriRe = /#\[tauri::command\][\s\S]{0,180}?\b(?:pub\s+)?(?:async\s+)?fn\s+([A-Za-z_][\w]*)/g
+    while ((m = tauriRe.exec(content)) && commands.length < 40) {
+        commands.push({ key: `${path}|${m[1]}`, name: m[1], type: 'tauri-command', source: path })
+    }
+    const invokeRe = /invoke\s*\(\s*['"`]([A-Za-z_][\w-]*)['"`]/g
+    while ((m = invokeRe.exec(content)) && commands.length < 60) {
+        commands.push({ key: `${path}|${m[1]}`, name: m[1], type: 'invoke', source: path })
+    }
+    return commands
+}
+
+function extractDomainModels(content, path) {
+    const models = []
+    const modelPath = /(entity|entities|model|models|dto|vo|po|schema|domain)/i.test(path)
+    const patterns = [
+        /\b(?:class|interface|type|enum)\s+([A-Z][A-Za-z0-9_]{2,})/g,
+        /\b(?:struct|enum)\s+([A-Z][A-Za-z0-9_]{2,})/g,
+    ]
+    for (const re of patterns) {
+        let m
+        while ((m = re.exec(content)) && models.length < 50) {
+            const name = m[1]
+            if (modelPath || /(Entity|DTO|Dto|VO|PO|Model|Record|Schema|Config|Request|Response)$/.test(name)) {
+                models.push({ key: `${path}|${name}`, name, source: path })
+            }
+        }
+    }
+    return models
+}
+
+function extractDatabaseTables(content, path) {
+    const tables = []
+    const patterns = [
+        /create\s+table\s+(?:if\s+not\s+exists\s+)?[`"\[]?([A-Za-z_][\w.-]*)[`"\]]?/gi,
+        /@Table\s*\(\s*name\s*=\s*["']([^"']+)["']/g,
+        /tableName\s*[:=]\s*['"`]([^'"`\n]+)['"`]/g,
+    ]
+    for (const re of patterns) {
+        let m
+        while ((m = re.exec(content)) && tables.length < 50) {
+            const name = String(m[1] || '').trim()
+            if (name) tables.push({ key: `${path}|${name}`, name, source: path })
+        }
+    }
+    return tables
+}
+
+function extractIntegrations(content, path, fileName) {
+    const integrations = []
+    if (fileName === 'package.json') {
+        try {
+            const pkg = JSON.parse(content)
+            const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) }
+            for (const name of Object.keys(deps).slice(0, 40)) {
+                integrations.push({ key: `npm|${name}`, name, type: 'npm', source: path })
+            }
+        } catch (e) {}
+    }
+    if (fileName === 'Cargo.toml') {
+        for (const name of content.matchAll(/^\s*([A-Za-z0-9_-]+)\s*=\s*["{]/gm)) {
+            integrations.push({ key: `cargo|${name[1]}`, name: name[1], type: 'cargo', source: path })
+        }
+    }
+    const serviceRe = /\b(mysql|postgres|postgresql|oracle|redis|mongodb|rabbitmq|kafka|elasticsearch|minio|s3|oss|docker|nginx|grpc|websocket|tauri|electron)\b/gi
+    let m
+    while ((m = serviceRe.exec(content)) && integrations.length < 80) {
+        integrations.push({ key: `${m[1].toLowerCase()}|${path}`, name: m[1], type: 'service', source: path })
+    }
+    return integrations
+}
+
+function extractWorkflowWords(content, path, labels) {
+    const words = []
+    const joined = `${labels.join(' ')} ${path} ${content.slice(0, 5000)}`
+    const cnRe = /([\u4e00-\u9fa5]{2,12}(?:管理|审核|审批|配置|生成|导出|导入|扫描|分析|查询|统计|监控|告警|登录|认证|授权|同步|发布|验收|巡检|调度|派发|处理|归档|备份|恢复))/g
+    let m
+    while ((m = cnRe.exec(joined)) && words.length < 50) {
+        const name = cleanLabel(m[1])
+        if (name) words.push({ key: `${path}|${name}`, name, source: path })
+    }
+    return words
+}
+
+function hasBusinessSignal(signal) {
+    return [
+        signal.pages, signal.routes, signal.apiEndpoints, signal.commands,
+        signal.domainModels, signal.databaseTables, signal.workflows, signal.integrations,
+    ].some(arr => arr && arr.length > 0)
+}
+
+function normalizeBusinessSignals(results) {
+    const biz = results.business
+    for (const key of Object.keys(biz)) {
+        if (Array.isArray(biz[key])) biz[key] = biz[key].slice(0, MAX_BUSINESS_ITEMS)
+    }
+}
+
+function pushUniqueObject(arr, item, keyProp, limit) {
+    if (!item || arr.length >= limit) return
+    const key = item[keyProp]
+    if (key && arr.some(x => x[keyProp] === key)) return
+    arr.push(item)
+}
+
+function uniqueStrings(list) {
+    const seen = new Set()
+    const out = []
+    for (const item of list) {
+        const v = String(item || '').trim()
+        if (!v || seen.has(v)) continue
+        seen.add(v)
+        out.push(v)
+    }
+    return out
+}
+
+function trimText(text, max) {
+    const s = String(text || '').replace(/\r\n/g, '\n')
+    return s.length > max ? s.slice(0, max) + '\n... (已截断)' : s
+}
+
+function cleanLabel(text) {
+    return String(text || '')
+        .replace(/\s+/g, ' ')
+        .replace(/[{}[\]();,]/g, '')
+        .trim()
+        .slice(0, 50)
+}
+
+function isBusinessLabel(v) {
+    if (!v || v.length < 2) return false
+    if (/^(true|false|null|undefined|default|index|class|style|click|submit|cancel|ok)$/i.test(v)) return false
+    if (/^[A-Za-z0-9_-]{1,3}$/.test(v)) return false
+    if (/^https?:\/\//i.test(v)) return false
+    return true
+}
+
+function normalizeRoute(route) {
+    const r = String(route || '').trim()
+    if (!r || r === '*' || r.includes('${')) return ''
+    if (/^(https?:)?\/\//i.test(r)) return ''
+    return r.length > 120 ? r.slice(0, 120) : r
+}
+
+function bestPageName(path, labels) {
+    const firstLabel = labels.find(x => /[\u4e00-\u9fa5]/.test(x)) || labels[0]
+    if (firstLabel) return firstLabel
+    const base = path.split(/[\\/]/).pop().replace(/\.[^.]+$/, '')
+    return humanizeName(base)
+}
+
+function humanizeName(name) {
+    return String(name || '')
+        .replace(/[-_]+/g, ' ')
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
+        .trim()
 }
 
 /**
@@ -334,6 +708,69 @@ export function buildContextSummary(scanResult, docInfo = {}, referenceFiles = [
             parts.push(`- **${mod.name}** (${mod.type}): ${mod.path} (${mod.fileCount} 个文件)`)
         }
         parts.push('')
+    }
+
+    // README / 项目说明
+    if (scanResult.readmes && scanResult.readmes.length > 0) {
+        parts.push('## README / 项目说明')
+        for (const doc of scanResult.readmes.slice(0, 3)) {
+            parts.push(`### ${doc.name} (${doc.path})`)
+            parts.push(doc.content)
+            parts.push('')
+        }
+    }
+
+    // 业务线索
+    if (scanResult.business) {
+        const biz = scanResult.business
+        parts.push('## 自动提取的业务线索')
+        if (biz.pages?.length) {
+            parts.push('### 页面 / 菜单 / 视图')
+            for (const p of biz.pages.slice(0, 25)) {
+                parts.push(`- ${p.name} (${p.path})${p.evidence?.length ? `；文案: ${p.evidence.join('、')}` : ''}`)
+            }
+            parts.push('')
+        }
+        if (biz.routes?.length) {
+            parts.push('### 前端路由')
+            for (const r of biz.routes.slice(0, 30)) parts.push(`- ${r.path} (${r.source})`)
+            parts.push('')
+        }
+        if (biz.apiEndpoints?.length) {
+            parts.push('### 接口 / API')
+            for (const api of biz.apiEndpoints.slice(0, 40)) parts.push(`- ${api.method} ${api.path} (${api.source})`)
+            parts.push('')
+        }
+        if (biz.commands?.length) {
+            parts.push('### 本地命令 / 后台能力')
+            for (const cmd of biz.commands.slice(0, 25)) parts.push(`- ${cmd.name} [${cmd.type}] (${cmd.source})`)
+            parts.push('')
+        }
+        if (biz.domainModels?.length) {
+            parts.push('### 领域对象')
+            for (const m of biz.domainModels.slice(0, 35)) parts.push(`- ${m.name} (${m.source})`)
+            parts.push('')
+        }
+        if (biz.databaseTables?.length) {
+            parts.push('### 数据表')
+            for (const t of biz.databaseTables.slice(0, 35)) parts.push(`- ${t.name} (${t.source})`)
+            parts.push('')
+        }
+        if (biz.workflows?.length) {
+            parts.push('### 流程 / 动作词')
+            for (const w of biz.workflows.slice(0, 30)) parts.push(`- ${w.name} (${w.source})`)
+            parts.push('')
+        }
+        if (biz.integrations?.length) {
+            parts.push('### 依赖 / 集成线索')
+            for (const dep of biz.integrations.slice(0, 35)) parts.push(`- ${dep.name} [${dep.type}] (${dep.source})`)
+            parts.push('')
+        }
+        if (biz.keyFiles?.length) {
+            parts.push('### 关键业务证据文件')
+            for (const f of biz.keyFiles.slice(0, 35)) parts.push(`- ${f.path}: ${f.role}${f.signals?.length ? `；${f.signals.join('；')}` : ''}`)
+            parts.push('')
+        }
     }
 
     // 配置文件内容
