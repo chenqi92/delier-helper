@@ -53,7 +53,7 @@
 </template>
 
 <script>
-import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList } from 'lucide-vue-next'
+import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList, Presentation } from 'lucide-vue-next'
 import { markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
 import UpdateChecker from './components/UpdateChecker.vue'
@@ -65,12 +65,13 @@ import SddGenerator from './views/SddGenerator.vue'
 import OpsManualGenerator from './views/OpsManualGenerator.vue'
 import TestCaseGenerator from './views/TestCaseGenerator.vue'
 import TestRecordGenerator from './views/TestRecordGenerator.vue'
+import PptGenerator from './views/PptGenerator.vue'
 import AiSettings from './views/AiSettings.vue'
 import { globalStore, initStore } from './core/global-store.js'
 
 export default {
   name: 'App',
-  components: { AiSidebar, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, AiSettings, Server, ClipboardCheck, ClipboardList },
+  components: { AiSidebar, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, PptGenerator, AiSettings, Server, ClipboardCheck, ClipboardList },
   provide() {
     return {
       showToast: this.showToast,
@@ -96,6 +97,7 @@ export default {
         { id: 'ops-doc',   label: '运维手册', icon: markRaw(Server) },
         { id: 'tc-doc',    label: '测试用例', icon: markRaw(ClipboardCheck) },
         { id: 'tr-doc',    label: '测试记录', icon: markRaw(ClipboardList) },
+        { id: 'ppt',       label: 'PPT', icon: markRaw(Presentation) },
         { id: 'ai-settings', label: 'AI 设置', icon: markRaw(Bot) },
       ],
       viewMap: {
@@ -107,6 +109,7 @@ export default {
         'ops-doc': 'OpsManualGenerator',
         'tc-doc': 'TestCaseGenerator',
         'tr-doc': 'TestRecordGenerator',
+        'ppt': 'PptGenerator',
         'ai-settings': 'AiSettings',
       },
     }
