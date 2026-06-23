@@ -43,7 +43,12 @@
       <aside class="config-panel">
         <!-- 模板 -->
         <div class="card">
-          <div class="card-header"><h3><LayoutTemplate :size="14" /> 模板</h3></div>
+          <div class="card-header">
+            <h3><LayoutTemplate :size="14" /> 模板</h3>
+            <button class="card-head-btn" @click="galleryOpen = true" title="平铺查看全部模板">
+              <LayoutGrid :size="13" /> 全部 {{ allTemplates.length }}
+            </button>
+          </div>
           <div class="card-body" style="padding:8px;">
             <div class="tpl-strip">
               <div v-for="t in templatePreviews" :key="t.id"
@@ -220,6 +225,33 @@
         </template>
       </main>
     </div>
+
+    <!-- 模板平铺画廊 -->
+    <Teleport to=".app-container">
+      <div v-if="galleryOpen" class="tpl-gallery-mask" @click.self="galleryOpen = false">
+        <div class="tpl-gallery">
+          <div class="tpl-gallery-head">
+            <span class="tg-title"><LayoutGrid :size="16" /> 选择模板</span>
+            <span class="tg-hint">点击任意模板即可套用 · 共 {{ allTemplates.length }} 套</span>
+            <button class="tg-close" @click="galleryOpen = false"><X :size="18" /></button>
+          </div>
+          <div class="tpl-gallery-grid">
+            <div v-for="t in templatePreviews" :key="t.id"
+              :class="['tg-card', { active: selectedTemplateId === t.id }]"
+              @click="pickTemplate(t.id)">
+              <div class="tg-thumb">
+                <SlideCanvas :slide="t.slide" :width="330" :interactive="false" />
+                <button v-if="t.isCustom" class="tpl-del" @click.stop="removeTemplate(t)"><X :size="12" /></button>
+                <span v-if="t.mode === 'fixed'" class="tpl-badge2">固定</span>
+                <div v-if="selectedTemplateId === t.id" class="tg-check"><Check :size="13" /> 当前</div>
+              </div>
+              <div class="tg-name">{{ t.name }}</div>
+              <div class="tg-desc">{{ t.description }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -229,7 +261,7 @@ import { writeFile, readFile } from '@tauri-apps/plugin-fs'
 import {
   Check, Sparkles, FileDown, FolderOpen, Search, X, Settings, Palette, LayoutTemplate, Presentation,
   Save, Type, Square, Circle, Star, Trash2, Copy, CopyPlus, Plus, RefreshCw, ChevronUp, ChevronDown,
-  SquareRoundCorner, Image as ImageIcon, Wand2,
+  SquareRoundCorner, Image as ImageIcon, Wand2, LayoutGrid,
 } from 'lucide-vue-next'
 import SlideCanvas from '../components/SlideCanvas.vue'
 import { scanCodebase, buildContextSummary } from '../core/doc-template/codebase-scanner.js'
@@ -251,7 +283,7 @@ export default {
     SlideCanvas,
     Check, Sparkles, FileDown, FolderOpen, Search, X, Settings, Palette, LayoutTemplate, Presentation,
     Save, Type, Square, Circle, Star, Trash2, Copy, CopyPlus, Plus, RefreshCw, ChevronUp, ChevronDown,
-    SquareRoundCorner, ImageIcon, Wand2,
+    SquareRoundCorner, ImageIcon, Wand2, LayoutGrid,
   },
   inject: ['showToast', 'globalStore'],
   data() {
@@ -267,6 +299,7 @@ export default {
       selectedTemplateId: 'ppt-auto',
       styleOverrideId: '',
       customTemplates: [],
+      galleryOpen: false,
       images: [],
       analyzing: false,
       lastStyleId: null,
@@ -340,10 +373,14 @@ export default {
   mounted() {
     this.$nextTick(this.updateSize)
     window.addEventListener('resize', this.updateSize)
+    window.addEventListener('keydown', this.onGalleryKey)
   },
   activated() { this.isActive = true; this.syncSelectionFromStore(); this.$nextTick(this.updateSize) },
   deactivated() { this.isActive = false },
-  beforeUnmount() { window.removeEventListener('resize', this.updateSize) },
+  beforeUnmount() {
+    window.removeEventListener('resize', this.updateSize)
+    window.removeEventListener('keydown', this.onGalleryKey)
+  },
   methods: {
     addLog(msg, level = 'info') {
       const now = new Date()
@@ -741,6 +778,13 @@ export default {
       this.customTemplates = await loadCustomPptTemplates()
       if (this.selectedTemplateId === t.id) this.selectedTemplateId = 'ppt-auto'
     },
+    pickTemplate(id) {
+      this.selectedTemplateId = id
+      this.galleryOpen = false
+    },
+    onGalleryKey(e) {
+      if (e.key === 'Escape' && this.galleryOpen) this.galleryOpen = false
+    },
 
     // ===== 导出 =====
     async exportPptx() {
@@ -800,6 +844,47 @@ export default {
 .img-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .img-del { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.55); border: none; color: #fff; border-radius: 3px; padding: 1px; cursor: pointer; display: flex; }
 .img-del:hover { background: var(--danger-500); }
+
+.card-head-btn {
+  display: flex; align-items: center; gap: 4px;
+  font-size: 11px; color: var(--text-secondary);
+  background: var(--bg-elevated); border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm); padding: 3px 8px; cursor: pointer; transition: all var(--transition-fast);
+}
+.card-head-btn:hover { color: var(--primary-500); border-color: var(--border-hover); }
+
+.tpl-gallery-mask {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(8, 11, 22, 0.66); backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center; padding: 3vh 3vw;
+}
+.tpl-gallery {
+  width: 100%; max-width: 1400px; height: 92vh;
+  background: var(--bg-surface); border: 1px solid var(--border-color);
+  border-radius: var(--radius-md); box-shadow: 0 24px 70px rgba(0,0,0,0.45);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.tpl-gallery-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 18px; border-bottom: 1px solid var(--border-color); flex-shrink: 0;
+}
+.tg-title { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.tg-hint { font-size: 12px; color: var(--text-secondary); }
+.tg-close { margin-left: auto; background: var(--bg-elevated); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 5px; cursor: pointer; display: flex; }
+.tg-close:hover { color: var(--danger-500); border-color: var(--danger-500); }
+.tpl-gallery-grid {
+  flex: 1; overflow-y: auto; padding: 18px;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 18px; align-content: start; justify-items: center;
+}
+.tg-card { width: 330px; cursor: pointer; }
+.tg-thumb { position: relative; border: 2px solid var(--border-color); border-radius: 8px; overflow: hidden; line-height: 0; transition: all var(--transition-fast); }
+.tg-card:hover .tg-thumb { border-color: var(--border-hover); transform: translateY(-2px); box-shadow: 0 10px 26px rgba(0,0,0,0.3); }
+.tg-card.active .tg-thumb { border-color: var(--primary-500); box-shadow: var(--shadow-glow); }
+.tg-name { font-size: 13.5px; font-weight: 700; color: var(--text-primary); margin-top: 8px; }
+.tg-card.active .tg-name { color: var(--primary-500); }
+.tg-desc { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.5; }
+.tg-check { position: absolute; bottom: 6px; right: 6px; display: flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600; color: #fff; background: var(--primary-500); padding: 2px 8px; border-radius: 10px; line-height: 1.2; }
 
 .editor-toolbar {
   display: flex; align-items: center; gap: 10px;
