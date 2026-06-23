@@ -49,12 +49,13 @@ const EXT_TO_RULE = {
 }
 
 export function removeComments(code, ext) {
-    const ruleName = EXT_TO_RULE[ext]
-    if (!ruleName) return code
-
     if (['.vue', '.svelte', '.astro'].includes(ext)) {
         return removeComponentComments(code)
     }
+
+    const ruleName = EXT_TO_RULE[ext]
+    if (!ruleName) return code
+
     if (ruleName === 'python') {
         return removePythonComments(code)
     }

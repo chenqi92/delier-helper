@@ -302,6 +302,7 @@ import { open, save } from '@tauri-apps/plugin-dialog'
 import { writeFile, readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { processFileContent, allocateCodeByRatio } from '../core/ratio-allocator.js'
 import { generateDocxBuffer } from '../core/docx-generator.js'
+import { calcMaxLineWidth } from '../core/line-wrapper.js'
 import { smartSortFiles } from '../core/file-sorter.js'
 import GuideTour from '../components/GuideTour.vue'
 import {
@@ -356,6 +357,7 @@ export default {
       previewData: null, previewLines: [],
       lastResult: null,
       dirResults: [],
+      processedFontSize: null,
       currentSeed: null,
       guideFinished: false,
       isActive: true,
@@ -544,6 +546,9 @@ export default {
       let processedCount = 0
       const dirResults = []
 
+      // 按当前字号计算长行折行宽度，确保预览与 Word 导出页数一致
+      const maxLineWidth = calcMaxLineWidth(this.config.fontSize)
+
       for (const dir of dirFiles) {
         const fileEntries = []
         let dirTotalLines = 0
@@ -558,7 +563,7 @@ export default {
 
           for (const fc of readResult.files) {
             if (fc.error || !fc.content) continue
-            const result = processFileContent(fc.content, fc.ext, this.config.cleanOptions)
+            const result = processFileContent(fc.content, fc.ext, this.config.cleanOptions, maxLineWidth)
             if (result.lines.length > 0) {
               fileEntries.push({
                 name: fc.name || fc.relative_path,
@@ -583,6 +588,8 @@ export default {
       }
 
       this.dirResults = dirResults
+      // 记录本次处理所用字号（决定了长行折行宽度）
+      this.processedFontSize = this.config.fontSize
 
       const totalLines = dirResults.reduce((s, d) => s + d.totalLines, 0)
       this.stats = {
@@ -670,7 +677,8 @@ export default {
 
       this.generating = true
       try {
-        if (this.dirResults.length === 0) {
+        // dirResults 为空或字号已变（折行宽度变化）时重新处理
+        if (this.dirResults.length === 0 || this.processedFontSize !== this.config.fontSize) {
           const result = await this.processAllFiles()
           if (!result) { this.generating = false; return }
         }

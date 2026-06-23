@@ -8,20 +8,29 @@
 import { removeComments } from './comment-remover.js'
 import { cleanCode, getCodeStats } from './code-cleaner.js'
 import { shuffleWithSeed } from './file-sorter.js'
+import { wrapLines } from './line-wrapper.js'
 
 /**
  * 处理单个文件内容
+ *
+ * @param {string} content - 文件原始内容
+ * @param {string} ext - 扩展名（含点，小写）
+ * @param {object} cleanOptions - 清理选项
+ * @param {number} maxLineWidth - 长行折行的每行最大宽度（em）；<= 0 时不折行
  */
-export function processFileContent(content, ext, cleanOptions = {}) {
+export function processFileContent(content, ext, cleanOptions = {}, maxLineWidth = 0) {
     const original = content
     let code = cleanOptions.removeComments !== false ? removeComments(content, ext) : content
     code = cleanCode(code, cleanOptions)
-    const lines = code.split('\n').filter(l => l.trim().length > 0)
+    let lines = code.split('\n').filter(l => l.trim().length > 0)
 
     // 防御性过滤：文件开头不可能是独立的闭合符号（注释移除后可能残留）
     while (lines.length > 0 && /^[}\])\s,;]*$/.test(lines[0].trim()) && lines[0].trim().length > 0) {
         lines.shift()
     }
+
+    // 按页面可用宽度折行，使预览逻辑行数与 Word 实际渲染行数一致
+    lines = wrapLines(lines, maxLineWidth)
 
     const stats = getCodeStats(original, code)
     return { lines, lineCount: lines.length, stats }
