@@ -34,6 +34,9 @@
           <div :style="iconGlyphStyle(el)" v-html="iconMarkup(el)"></div>
         </div>
 
+        <!-- 图表 -->
+        <div v-else-if="el.type === 'chart'" style="width:100%;height:100%;" v-html="chartMarkup(el)"></div>
+
         <!-- 选中描边 + 缩放手柄 -->
         <template v-if="interactive && el.id === selectedId && editingId !== el.id">
           <div class="sel-outline"></div>
@@ -66,6 +69,7 @@
 import { SLIDE_W, SLIDE_H, clamp, rgba } from '../core/ppt/ppt-geometry.js'
 import { textParagraphs } from '../core/ppt/ppt-elements.js'
 import { iconSvg } from '../core/ppt/ppt-icons.js'
+import { chartSvg } from '../core/ppt/ppt-charts.js'
 
 export default {
   name: 'SlideCanvas',
@@ -173,6 +177,7 @@ export default {
       return { position: 'absolute', left: off + '%', top: off + '%', width: g + '%', height: g + '%' }
     },
     iconMarkup(el) { return iconSvg(el.name, el.color, el.strokeWidth || 2) },
+    chartMarkup(el) { return chartSvg(el, this.px(el.w), this.px(el.h)) },
 
     // ===== 选择 / 拖动 =====
     onBackgroundDown() {

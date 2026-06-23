@@ -44,16 +44,20 @@
         <!-- 模板 -->
         <div class="card">
           <div class="card-header"><h3><LayoutTemplate :size="14" /> 模板</h3></div>
-          <div class="card-body" style="display:flex;flex-direction:column;gap:6px;">
-            <div v-for="t in allTemplates" :key="t.id"
-              :class="['tpl-item', { active: selectedTemplateId === t.id }]"
-              @click="selectedTemplateId = t.id">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                <span class="tpl-name">{{ t.name }}<span v-if="t.mode==='fixed'" class="tpl-badge">固定</span></span>
-                <button v-if="t.isCustom" class="icon-btn" @click.stop="removeTemplate(t)" title="删除"><X :size="12" /></button>
+          <div class="card-body" style="padding:8px;">
+            <div class="tpl-strip">
+              <div v-for="t in templatePreviews" :key="t.id"
+                :class="['tpl-card', { active: selectedTemplateId === t.id }]"
+                @click="selectedTemplateId = t.id" :title="t.description">
+                <div class="tpl-thumb">
+                  <SlideCanvas :slide="t.slide" :width="186" :interactive="false" />
+                  <button v-if="t.isCustom" class="tpl-del" @click.stop="removeTemplate(t)"><X :size="11" /></button>
+                  <span v-if="t.mode==='fixed'" class="tpl-badge2">固定</span>
+                </div>
+                <div class="tpl-card-name">{{ t.name }}</div>
               </div>
-              <div class="tpl-desc">{{ t.description }}</div>
             </div>
+            <div class="tpl-desc-line">{{ selectedTemplate?.description }}</div>
           </div>
         </div>
 
@@ -97,8 +101,11 @@
         <div class="card">
           <div class="card-header"><h3><Settings :size="14" /> 内容设置</h3></div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:6px;">
+            <button class="btn btn-secondary btn-sm" style="width:100%;" :disabled="analyzing || aiProcessing || !scanResult" @click="analyzeProject">
+              <Wand2 :size="14" /> {{ analyzing ? '分析中...' : 'AI 分析项目 · 自动填主题/方向/风格' }}
+            </button>
             <div class="form-group">
-              <label class="form-label">主题</label>
+              <label class="form-label">主题<span style="color:var(--text-muted);font-weight:400;"> · 留空则由 AI 分析项目拟定</span></label>
               <input type="text" class="form-input" v-model="cfg.topic" placeholder="如：XX 管理系统 产品介绍" />
             </div>
             <div class="form-group">
@@ -126,6 +133,23 @@
           </div>
         </div>
 
+        <!-- 图片素材 -->
+        <div class="card">
+          <div class="card-header"><h3><ImageIcon :size="14" /> 图片素材</h3></div>
+          <div class="card-body">
+            <p style="font-size:11px;color:var(--text-secondary);margin:0 0 6px;line-height:1.5;">导入截图/配图,生成时自动编排进合适的页面(大图展示/图集/图文页)</p>
+            <div v-if="images.length" class="img-thumbs">
+              <div v-for="(im, idx) in images" :key="idx" class="img-thumb">
+                <img :src="im.src" :title="im.name" />
+                <button class="img-del" @click="removeImage(idx)"><X :size="10" /></button>
+              </div>
+            </div>
+            <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;" @click="addImages">
+              <ImageIcon :size="14" /> 添加图片{{ images.length ? '（' + images.length + '）' : '' }}
+            </button>
+          </div>
+        </div>
+
         <button v-if="deck" class="btn btn-secondary btn-sm" style="margin-top:2px;" @click="saveAsTemplate">
           <Save :size="14" /> 存为模板
         </button>
@@ -149,6 +173,7 @@
               <button class="tb-btn" @click="addShape('roundRect')" title="加圆角矩形"><SquareRoundCorner :size="14" /></button>
               <button class="tb-btn" @click="addShape('ellipse')" title="加圆"><Circle :size="14" /></button>
               <button class="tb-btn" @click="addIcon" title="加图标"><Star :size="14" /></button>
+              <button class="tb-btn" @click="addImageEl" title="加图片"><ImageIcon :size="14" /></button>
             </div>
             <div class="tb-group" v-if="selectedEl">
               <input type="color" class="tb-color" :value="'#' + selColor" @input="setSelColor($event.target.value)" title="颜色" />
@@ -200,16 +225,16 @@
 
 <script>
 import { open, save } from '@tauri-apps/plugin-dialog'
-import { writeFile } from '@tauri-apps/plugin-fs'
+import { writeFile, readFile } from '@tauri-apps/plugin-fs'
 import {
   Check, Sparkles, FileDown, FolderOpen, Search, X, Settings, Palette, LayoutTemplate, Presentation,
   Save, Type, Square, Circle, Star, Trash2, Copy, CopyPlus, Plus, RefreshCw, ChevronUp, ChevronDown,
-  SquareRoundCorner,
+  SquareRoundCorner, Image as ImageIcon, Wand2,
 } from 'lucide-vue-next'
 import SlideCanvas from '../components/SlideCanvas.vue'
 import { scanCodebase, buildContextSummary } from '../core/doc-template/codebase-scanner.js'
 import { getResolvedConfig } from '../core/llm/llm-service.js'
-import { generateOutline, generateSlideContent, createAiController } from '../core/ppt/ppt-llm-service.js'
+import { generateOutline, generateSlideContent, generateProjectBrief, createAiController } from '../core/ppt/ppt-llm-service.js'
 import { buildDeckFromOutline, restyleDeck, appendBlankSlide } from '../core/ppt/ppt-deck.js'
 import { buildSlide } from '../core/ppt/ppt-layouts.js'
 import { getStyle, listStyles, pickRandomStyle, DEFAULT_STYLE_ID } from '../core/ppt/ppt-styles.js'
@@ -226,7 +251,7 @@ export default {
     SlideCanvas,
     Check, Sparkles, FileDown, FolderOpen, Search, X, Settings, Palette, LayoutTemplate, Presentation,
     Save, Type, Square, Circle, Star, Trash2, Copy, CopyPlus, Plus, RefreshCw, ChevronUp, ChevronDown,
-    SquareRoundCorner,
+    SquareRoundCorner, ImageIcon, Wand2,
   },
   inject: ['showToast', 'globalStore'],
   data() {
@@ -242,6 +267,8 @@ export default {
       selectedTemplateId: 'ppt-auto',
       styleOverrideId: '',
       customTemplates: [],
+      images: [],
+      analyzing: false,
       lastStyleId: null,
       aiProcessing: false,
       aiProgressText: '',
@@ -255,6 +282,20 @@ export default {
   computed: {
     allTemplates() {
       return [...getPptPresets().map(t => ({ ...t, isCustom: false })), ...this.customTemplates.map(t => ({ ...t, isCustom: true }))]
+    },
+    templatePreviews() {
+      const sample = {
+        kicker: '示例', title: '风格预览',
+        cards: [
+          { icon: 'zap', title: '高性能', desc: '示例描述文字内容' },
+          { icon: 'shield', title: '更安全', desc: '示例描述文字内容' },
+          { icon: 'database', title: '易扩展', desc: '示例描述文字内容' },
+        ],
+      }
+      return this.allTemplates.map(t => {
+        const sid = (!t.styleId || t.styleId === 'auto') ? 'tech-dark' : t.styleId
+        return { ...t, slide: buildSlide('featureGrid', sample, getStyle(sid), 1) }
+      })
     },
     selectedTemplate() {
       return this.allTemplates.find(t => t.id === this.selectedTemplateId) || this.allTemplates[0]
@@ -347,13 +388,85 @@ export default {
         this.showToast(`扫描完成！发现 ${totalFiles} 个文件`, 'success')
         if (!this.cfg.topic) {
           for (const cfg of this.scanResult.configs) {
-            if (cfg.name === 'package.json') { try { this.cfg.topic = (JSON.parse(cfg.content).name || '') + ' 产品介绍' } catch (e) {} }
+            if (cfg.name !== 'package.json') continue
+            let pkgName = ''
+            try { pkgName = (JSON.parse(cfg.content).name || '').trim() } catch (e) { continue }
+            if (pkgName) { this.cfg.topic = pkgName + ' 产品介绍'; break }
           }
         }
       } catch (e) {
         this.showToast('扫描失败: ' + String(e), 'error')
       }
       this.scanning = false
+    },
+
+    // ===== 图片素材 =====
+    bytesToDataUrl(bytes, mime) {
+      return new Promise((resolve, reject) => {
+        const fr = new FileReader()
+        fr.onload = () => resolve(fr.result)
+        fr.onerror = reject
+        fr.readAsDataURL(new Blob([bytes], { type: mime }))
+      })
+    },
+    mimeOf(path) {
+      const ext = String(path).split('.').pop().toLowerCase()
+      return ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : ext === 'bmp' ? 'image/bmp' : 'image/jpeg'
+    },
+    async readImageDataUrl(path) {
+      const bytes = await readFile(path)
+      return this.bytesToDataUrl(bytes, this.mimeOf(path))
+    },
+    async addImages() {
+      const picked = await open({ multiple: true, title: '选择图片', filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }] })
+      if (!picked) return
+      const list = Array.isArray(picked) ? picked : [picked]
+      for (const p of list) {
+        try {
+          const src = await this.readImageDataUrl(p)
+          this.images.push({ name: p.split(/[\\/]/).pop(), src })
+        } catch (e) { this.showToast('读取图片失败: ' + String(e), 'error') }
+      }
+    },
+    removeImage(idx) { this.images.splice(idx, 1) },
+    async addImageEl() {
+      const p = await open({ multiple: false, title: '选择图片', filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }] })
+      if (!p) return
+      try {
+        const src = await this.readImageDataUrl(p)
+        this.addElement(E.image({ x: 4, y: 2.3, w: 5.3, h: 3.3, src, sizing: 'cover', frame: true, radius: 0.08 }))
+      } catch (e) { this.showToast('读取图片失败: ' + String(e), 'error') }
+    },
+    /** 把可用图片注入到图片类版式的内容里（content 自带 src，换风格不丢图） */
+    assignImages(layout, content, srcs, ptr) {
+      if (!srcs || !srcs.length) return
+      if (layout === 'imageShowcase') { content.imageSrc = srcs[ptr.v % srcs.length]; ptr.v++ }
+      else if (layout === 'textMedia') { content.mediaSrc = srcs[ptr.v % srcs.length]; ptr.v++ }
+      else if (layout === 'imageGrid') {
+        const n = Math.min(4, Math.max(2, (content.captions || []).length || Math.min(srcs.length, 4)))
+        content.imageSrcs = Array.from({ length: n }, (_, i) => srcs[(ptr.v + i) % srcs.length])
+        ptr.v += n
+      }
+    },
+
+    // ===== 项目分析 =====
+    async analyzeProject() {
+      if (this.analyzing || this.aiProcessing) return
+      const llmConfig = this.resolveLlm()
+      if (!llmConfig) return
+      if (!this.scanResult) { this.showToast('请先扫描代码库', 'warning'); return }
+      this.analyzing = true
+      try {
+        const brief = await generateProjectBrief(llmConfig, this.buildContext())
+        if (brief.topic) this.cfg.topic = brief.topic
+        if (brief.audience) this.cfg.audience = brief.audience
+        if (brief.direction) this.cfg.direction = brief.direction
+        if (brief.styleId) this.styleOverrideId = brief.styleId
+        this.showToast(brief.summary ? `已分析：${brief.summary}` : '已根据项目填好主题与方向', 'success')
+      } catch (e) {
+        this.showToast('分析失败: ' + String(e.message || e), 'error')
+      }
+      this.analyzing = false
     },
 
     // ===== AI 生成 =====
@@ -397,9 +510,26 @@ export default {
       window.dispatchEvent(new Event('ai-fill-start'))
       const contextSummary = this.buildContext()
       const tpl = this.selectedTemplate
-      const genCfg = { ...this.cfg, styleId: this.styleOverrideId || tpl?.styleId || 'auto' }
+      const imgSrcs = this.images.map(i => i.src)
 
       try {
+        // 项目分析：主题留空且已扫描时，先由 AI 分析项目定主题/方向/风格
+        let briefStyle = null
+        if (!this.cfg.topic && this.scanResult) {
+          this.aiProgressText = '分析项目…'
+          this.addLog('[进行] 分析项目，推导主题...')
+          try {
+            const brief = await generateProjectBrief(llmConfig, contextSummary, { signal: this.aiController.signal })
+            if (brief.topic) this.cfg.topic = brief.topic
+            if (brief.audience && !this.cfg.audience) this.cfg.audience = brief.audience
+            if (brief.direction && !this.cfg.direction) this.cfg.direction = brief.direction
+            briefStyle = brief.styleId
+            if (brief.summary) this.addLog(`[完成] 项目定位：${brief.summary}`, 'success')
+          } catch (e) { if (e.name === 'AbortError') throw e }
+        }
+        const tplStyle = (tpl?.styleId && tpl.styleId !== 'auto') ? tpl.styleId : null
+        const genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || briefStyle || 'auto' }
+
         // 阶段 A：大纲
         this.aiProgressText = '正在编排大纲…'
         this.addLog('[进行] 编排 PPT 大纲...')
@@ -422,6 +552,7 @@ export default {
         // 注入落款到封面/封底
         const meta = { topic: this.cfg.topic, audience: this.cfg.audience, language: this.cfg.language, direction: this.cfg.direction, footnote: this.cfg.footnote }
         this.deck = buildDeckFromOutline(outline, meta)
+        this.deck.assets = { images: imgSrcs }
         this.currentSlideIndex = 0
         this.selectedElId = null
         this.$nextTick(this.updateSize)
@@ -429,6 +560,7 @@ export default {
 
         // 阶段 B：逐页填充（按 id 回写，防止生成期间结构变化导致错位）
         const prevTitles = []
+        const imgPtr = { v: 0 }
         for (let i = 0; i < outline.slides.length; i++) {
           if (this.aiController.cancelled) break
           if (this.aiController.paused) { await this.aiController.waitIfPaused(); if (this.aiController.cancelled) break }
@@ -440,6 +572,7 @@ export default {
             const content = await generateSlideContent(llmConfig, o, contextSummary, genCfg, prevTitles.slice(-12), { signal: this.aiController.signal })
             prevTitles.push(content.title || o.title || '')
             this.applyCoverFootnote(o.layout, content)
+            this.assignImages(o.layout, content, imgSrcs, imgPtr)
             const idx = this.deck.slides.findIndex(s => s.id === slideId)
             if (idx < 0) continue
             const built = buildSlide(o.layout, content, getStyle(this.deck.styleId), idx + 1)
@@ -481,6 +614,15 @@ export default {
         const o = { layout: s.layout, title: s.title, intent: s.intent || '' }
         const content = await generateSlideContent(llmConfig, o, this.buildContext(), { ...this.cfg }, [], { signal: this.aiController.signal })
         this.applyCoverFootnote(s.layout, content)
+        // 保留本页原有配图；若原本没有则按需补一张
+        if (s.content) {
+          if (s.content.imageSrc) content.imageSrc = s.content.imageSrc
+          if (s.content.imageSrcs) content.imageSrcs = s.content.imageSrcs
+          if (s.content.mediaSrc) content.mediaSrc = s.content.mediaSrc
+        }
+        if (!content.imageSrc && !content.mediaSrc && !content.imageSrcs) {
+          this.assignImages(s.layout, content, this.deck.assets?.images || [], { v: 0 })
+        }
         const idx = this.deck.slides.findIndex(x => x.id === s.id)
         if (idx >= 0) {
           const built = buildSlide(s.layout, content, getStyle(this.deck.styleId), idx + 1)
@@ -648,6 +790,23 @@ export default {
 .swatch-row { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .swatch { width: 20px; height: 20px; border-radius: 5px; border: 2px solid transparent; cursor: pointer; }
 .swatch.active { outline: 2px solid var(--primary-500); outline-offset: 1px; }
+
+.tpl-strip { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x mandatory; }
+.tpl-card { flex: 0 0 auto; width: 188px; cursor: pointer; scroll-snap-align: start; }
+.tpl-thumb { position: relative; border: 2px solid transparent; border-radius: 7px; overflow: hidden; line-height: 0; }
+.tpl-card.active .tpl-thumb { border-color: var(--primary-500); box-shadow: var(--shadow-glow); }
+.tpl-card-name { font-size: 11.5px; font-weight: 600; color: var(--text-primary); margin-top: 5px; text-align: center; }
+.tpl-card.active .tpl-card-name { color: var(--primary-500); }
+.tpl-del { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.55); border: none; color: #fff; border-radius: 4px; padding: 2px; cursor: pointer; display: flex; }
+.tpl-del:hover { background: var(--danger-500); }
+.tpl-badge2 { position: absolute; top: 4px; left: 4px; font-size: 9px; background: var(--primary-500); color: #fff; padding: 1px 6px; border-radius: 6px; font-weight: 600; }
+.tpl-desc-line { font-size: 11px; color: var(--text-secondary); margin-top: 6px; line-height: 1.5; }
+
+.img-thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; }
+.img-thumb { position: relative; aspect-ratio: 1; border-radius: 5px; overflow: hidden; border: 1px solid var(--border-color); }
+.img-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.img-del { position: absolute; top: 2px; right: 2px; background: rgba(0,0,0,0.55); border: none; color: #fff; border-radius: 3px; padding: 1px; cursor: pointer; display: flex; }
+.img-del:hover { background: var(--danger-500); }
 
 .editor-toolbar {
   display: flex; align-items: center; gap: 10px;

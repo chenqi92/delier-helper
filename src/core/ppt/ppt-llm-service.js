@@ -60,7 +60,8 @@ export function buildOutlineMessages(contextSummary, cfg, lastStyleId = null) {
     ? `已指定风格 id = "${cfg.styleId}"，必须采用它，不要改。`
     : `风格未指定，请从风格库中选一个最契合主题与受众的风格${lastStyleId ? `，且不要选 "${lastStyleId}"（避免与上次重复）` : ''}。`
 
-  const system = `你是资深演示设计师 + 演示文稿工程师。现在为一套「项目/代码库」生成 PPT 的【大纲】。
+  const imgCount = Math.max(0, parseInt(cfg.imageCount, 10) || 0)
+  const system = `你是资深演示设计师 + 演示文稿工程师。先【分析这个项目/代码库的性质】（是什么系统、技术栈、面向谁、核心价值），再据此为它量身定一条叙事主线，然后产出 PPT 的【大纲】。不要套用千篇一律的固定结构。
 
 只输出 JSON，结构：
 {
@@ -76,12 +77,20 @@ ${layoutMenuForPrompt()}
 
 硬性规则：
 1. slides 数量必须正好 ${pageCount} 页（含封面、封底）。
-2. 第 1 页必须 layout="cover"（封面），最后 1 页必须 layout="closing"（封底）。
-3. ${pageCount >= 8 ? '第 2 页建议 layout="toc"（目录）。较长篇幅用 section（章节分隔）把内容分段。' : '页数较少，可不放目录。'}
-4. 相邻两页的 layout 不要相同；根据内容在版式菜单里挑最合适的，整体有节奏。
+2. 第 1 页必须 layout="cover"，最后 1 页必须 layout="closing"。
+3. ${pageCount >= 8 ? '第 2 页建议 layout="toc"。较长篇幅用 section 分段。' : '页数较少，可不放目录。'}
+4. 相邻两页 layout 不同；整体要有节奏与变化。
 5. ${styleDirective}
-6. title 用 ${language}，要具体、有信息量；intent 描述该页核心信息。
-7. 内容必须围绕用户提供的代码库/项目上下文，紧扣主题与「内容大方向」。
+6. title 用 ${language}，具体、有信息量；intent 描述核心信息。
+7. 内容紧扣代码库上下文与「内容大方向」，主题由你分析项目后拟定。
+
+【视觉多样性（重点）】不要整套都是图标卡。卡片网格类版式（iconCards/featureGrid/capabilityGrid）合计不超过 2 页。要主动穿插数据/图示类版式让 PPT 有亮点：
+- 有可量化信息时用 barChart / lineTrend / proportion（如代码语言分布、各模块文件数占比、规模对比）或 progressBars（能力/成熟度评分）。
+- 讲系统结构时用 architecture（分层架构图），不要只用文字罗列。
+- 用 bigNumbers 放关键指标，compareColumns/compareTable 做对照，cycle 表达闭环，quote 提炼金句。
+${imgCount > 0
+      ? `【可用配图 ${imgCount} 张】请安排 ${Math.min(imgCount, 3)} 页左右用 imageShowcase / imageGrid / textMedia 来展示这些图（系统会自动把图填入）。`
+      : `当前没有可用配图，禁止使用 imageShowcase / imageGrid；textMedia 也尽量少用（会显示占位图）。`}
 
 不要输出 JSON 以外的任何解释文字。`
 
@@ -103,7 +112,7 @@ ${contextSummary || '（无扫描上下文，请只写该领域通用、可验�
   return [{ role: 'system', content: system }, { role: 'user', content: user }]
 }
 
-const ALT_LAYOUTS = ['bullets', 'iconCards', 'featureGrid', 'timeline', 'bigNumbers', 'compareColumns', 'textMedia', 'capabilityGrid', 'cycle', 'compareTable']
+const ALT_LAYOUTS = ['bullets', 'iconCards', 'featureGrid', 'timeline', 'bigNumbers', 'compareColumns', 'barChart', 'architecture', 'progressBars', 'capabilityGrid', 'lineTrend', 'proportion', 'cycle', 'compareTable']
 
 /** 把模型返回的大纲规整到合法、命中页数、首尾正确、相邻不重复 */
 export function normalizeOutline(parsed, cfg, lastStyleId = null) {
@@ -113,12 +122,14 @@ export function normalizeOutline(parsed, cfg, lastStyleId = null) {
   let styleId = forced || (parsed && getStyle(parsed.style)?.id === parsed.style ? parsed.style : null)
   if (!styleId) styleId = pickRandomStyle(lastStyleId).id
 
+  const imgCount = Math.max(0, parseInt(cfg.imageCount, 10) || 0)
+  const IMG_LAYOUTS = ['imageShowcase', 'imageGrid']
   let slides = Array.isArray(parsed?.slides) ? parsed.slides.slice() : []
-  slides = slides.map(s => ({
-    layout: LAYOUT_MAP[s?.layout] ? s.layout : 'bullets',
-    title: String(s?.title || '').slice(0, 60),
-    intent: String(s?.intent || '').slice(0, 200),
-  }))
+  slides = slides.map(s => {
+    let layout = LAYOUT_MAP[s?.layout] ? s.layout : 'bullets'
+    if (imgCount === 0 && IMG_LAYOUTS.includes(layout)) layout = 'bullets' // 无配图则不排图片版式
+    return { layout, title: String(s?.title || '').slice(0, 60), intent: String(s?.intent || '').slice(0, 200) }
+  })
 
   if (slides.length === 0) slides = [{ layout: 'cover', title: cfg.topic || '标题', intent: '封面' }]
   // 首页封面
@@ -168,6 +179,31 @@ export async function generateOutline(llmConfig, contextSummary, cfg, lastStyleI
   })
   const parsed = robustJsonParse(text)
   return normalizeOutline(parsed, cfg, lastStyleId)
+}
+
+// ===================== 项目分析：由代码库推导主题 =====================
+
+export async function generateProjectBrief(llmConfig, contextSummary, opts = {}) {
+  const styleMenu = listStyles().map(s => `${s.id}(${s.name})`).join('、')
+  const messages = [
+    {
+      role: 'system',
+      content: `分析给定代码库，推断这是什么项目，并为「项目介绍 PPT」拟定方案。只输出 JSON：
+{ "topic": "<PPT 主题/标题>", "audience": "<目标受众>", "direction": "<内容大方向，列出该突出的 3-5 个重点>", "styleId": "<最契合的风格 id>", "summary": "<一句话项目定位>" }
+可选风格 id：${styleMenu}。基于真实代码结构与技术栈判断，不要臆造业务。只输出 JSON。`,
+    },
+    { role: 'user', content: contextSummary || '（无扫描上下文）' },
+  ]
+  const text = await callLlm(llmConfig, messages, { maxTokens: 2048, temperature: 0.5, jsonMode: true, signal: opts.signal })
+  const parsed = robustJsonParse(text) || {}
+  const styleId = getStyle(parsed.styleId)?.id === parsed.styleId ? parsed.styleId : null
+  return {
+    topic: String(parsed.topic || '').slice(0, 80),
+    audience: String(parsed.audience || '').slice(0, 60),
+    direction: String(parsed.direction || '').slice(0, 300),
+    styleId,
+    summary: String(parsed.summary || '').slice(0, 120),
+  }
 }
 
 // ===================== 阶段 B：逐页内容 =====================

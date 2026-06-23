@@ -10,8 +10,8 @@
  */
 import { E } from './ppt-elements.js'
 import {
-  SLIDE_W, SLIDE_H, MARGIN, GUTTER, contentBox, splitCols, gridCells,
-  mix, lighten, darken, pickInk, ensureContrast,
+  SLIDE_W, SLIDE_H, MARGIN, GUTTER, contentBox, splitCols, gridCells, clamp,
+  mix, lighten, darken, pickInk, ensureContrast, hexToHsl, hslToHex,
 } from './ppt-geometry.js'
 import { slideTheme } from './ppt-styles.js'
 
@@ -127,6 +127,31 @@ function heroDecor(theme, style) {
 const ACCENTS = (theme, style) => {
   const c = style.colors
   return [theme.accent, c.secondary, c.primary, mix(theme.accent, c.primary, 0.5)]
+}
+
+// 图表配色：以品牌强调色打头，其余按色相轮转，保证各数据类别之间也能区分
+function chartPalette(theme, style) {
+  const baseH = hexToHsl(theme.accent).h
+  const offsets = [60, 120, 180, 240, 300]
+  const sat = 0.62, lig = theme.onDark ? 0.62 : 0.45
+  const out = [theme.accent]
+  for (let i = 0; i < offsets.length; i++) out.push(hslToHex(baseH + offsets[i], sat, lig))
+  return out.map(col => ensureContrast(col, theme.bg, 1.7))
+}
+
+// 右下角页码（无 header 的图表/图片页复用）
+function contentZone(hasNote) {
+  return { x: MARGIN, y: HEADER_BOTTOM + 0.3, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.3 - (hasNote ? 0.95 : 0.5) }
+}
+
+// 媒体占位框（无真实图片时）
+function mediaPlaceholder(theme, style, box, icon, caption) {
+  const els = []
+  const frameBorder = { color: theme.onDark ? mix(theme.bg, theme.ink, 0.3) : mix(theme.card, theme.ink, 0.18), width: 1.25 }
+  els.push(E.roundRect({ x: box.x, y: box.y, w: box.w, h: box.h, radius: style.radius, fill: mix(theme.card, theme.bg, theme.onDark ? 0.2 : 0), line: frameBorder, shadow: !theme.onDark }))
+  const ic = Math.min(1.4, box.h * 0.4)
+  els.push(...chipIcon(box.x + box.w / 2, box.y + box.h / 2, ic, { icon: icon || 'monitor', glyph: pickInk(theme.accent), fill: theme.accent, round: style.motif !== 'block' }))
+  return els
 }
 
 // ===================== 版式注册 =====================
@@ -443,12 +468,163 @@ export const LAYOUTS = [
         els.push(E.rect({ x: box.x, y: y + rowH / 2 - 0.08, w: 0.16, h: 0.16, fill: t.accent }))
         els.push(E.text({ x: box.x + 0.38, y, w: leftW - 0.42, h: rowH, text: b, fontFace: style.fonts.body, fontSize: 13, color: t.ink, valign: 'middle' }))
       })
-      // 右侧媒体占位框（窗口框 + 大图标）
-      const frameBorder = { color: t.onDark ? mix(t.bg, t.ink, 0.3) : mix(t.card, t.ink, 0.18), width: 1.25 }
-      els.push(E.roundRect({ x: rightX, y: box.y, w: rightW, h: box.h - 0.4, radius: style.radius, fill: mix(t.card, t.bg, t.onDark ? 0.2 : 0), line: frameBorder, shadow: !t.onDark }))
-      const ic = 1.4
-      els.push(...chipIcon(rightX + rightW / 2, box.y + (box.h - 0.4) / 2, ic, { icon: content.mediaIcon || 'monitor', glyph: pickInk(t.accent), fill: t.accent, round: style.motif !== 'block' }))
+      // 右侧媒体：有真实图片则用图片框，否则占位
+      const mediaBox = { x: rightX, y: box.y, w: rightW, h: box.h - 0.4 }
+      if (content.mediaSrc) {
+        els.push(E.image({ x: mediaBox.x, y: mediaBox.y, w: mediaBox.w, h: mediaBox.h, src: content.mediaSrc, sizing: 'cover', radius: style.radius, frame: true, frameColor: t.onDark ? mix(t.bg, t.ink, 0.3) : mix(t.card, t.ink, 0.2) }))
+      } else {
+        els.push(...mediaPlaceholder(t, style, mediaBox, content.mediaIcon || 'monitor'))
+      }
       els.push(E.text({ x: rightX, y: box.y + box.h - 0.35, w: rightW, h: 0.3, text: content.caption || '示意图', align: 'center', fontFace: style.fonts.body, fontSize: 10.5, italic: true, color: t.muted }))
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'barChart', label: '柱状图', role: 'content',
+    fields: 'kicker, title, cats(类别字符串数组 3-6 个), series(1-2 组，每组 {name, values(与 cats 等长的数字)}), note(一句洞察，可选)。尽量用上下文里的真实数字（如语言分布、各模块文件数）',
+    sample: { kicker: '数据', title: '模块规模对比', cats: ['前端', '服务', '数据', '工具'], series: [{ name: '文件数', values: [42, 35, 18, 12] }], note: '' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const box = contentZone(!!content.note)
+      els.push(E.chart({ x: box.x, y: box.y, w: box.w, h: box.h, chartType: 'bar', cats: content.cats || [], series: content.series || [], colors: chartPalette(t, style), legend: (content.series || []).length > 1, axisColor: t.muted, gridColor: t.line, valueColor: t.muted, fontFace: style.fonts.body, bgColor: t.bg }))
+      if (content.note) els.push(E.text({ x: box.x, y: SLIDE_H - 0.92, w: box.w, h: 0.42, text: content.note, fontFace: style.fonts.body, fontSize: 12, italic: true, color: t.muted }))
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'lineTrend', label: '趋势折线图', role: 'content',
+    fields: 'kicker, title, cats(时间/阶段字符串数组), series(1-2 组，每组 {name, values}), note(可选)。无真实趋势数据时不要编造',
+    sample: { kicker: '趋势', title: '增长趋势', cats: ['Q1', 'Q2', 'Q3', 'Q4'], series: [{ name: '指标', values: [20, 38, 55, 80] }], note: '' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const box = contentZone(!!content.note)
+      els.push(E.chart({ x: box.x, y: box.y, w: box.w, h: box.h, chartType: 'area', cats: content.cats || [], series: content.series || [], colors: chartPalette(t, style), legend: (content.series || []).length > 1, axisColor: t.muted, gridColor: t.line, valueColor: t.muted, fontFace: style.fonts.body, bgColor: t.bg }))
+      if (content.note) els.push(E.text({ x: box.x, y: SLIDE_H - 0.92, w: box.w, h: 0.42, text: content.note, fontFace: style.fonts.body, fontSize: 12, italic: true, color: t.muted }))
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'proportion', label: '占比环形图', role: 'content',
+    fields: 'kicker, title, cats(分类名数组), values(与 cats 等长的数字), note(可选)。可用代码语言分布等真实占比',
+    sample: { kicker: '构成', title: '技术栈构成', cats: ['后端', '前端', '数据', '配置'], values: [45, 30, 15, 10], note: '' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const box = contentZone(!!content.note)
+      els.push(E.chart({ x: box.x, y: box.y, w: box.w, h: box.h, chartType: 'doughnut', cats: content.cats || [], series: [{ name: '', values: content.values || [] }], colors: chartPalette(t, style), legend: true, showValue: true, axisColor: t.muted, gridColor: t.line, valueColor: t.cardInk, fontFace: style.fonts.body, bgColor: t.bg }))
+      if (content.note) els.push(E.text({ x: box.x, y: SLIDE_H - 0.92, w: box.w, h: 0.42, text: content.note, fontFace: style.fonts.body, fontSize: 12, italic: true, color: t.muted }))
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'progressBars', label: '能力评分条', role: 'content',
+    fields: 'kicker, title, items(3-6 项，每项 {label, value(0-100 的数字)})',
+    sample: { kicker: '评估', title: '能力成熟度', items: [{ label: '自动化', value: 85 }, { label: '可观测性', value: 70 }, { label: '安全合规', value: 92 }, { label: '弹性扩展', value: 60 }] },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const items = (content.items || []).slice(0, 6)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.3, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.8 }
+      const rowH = box.h / Math.max(items.length, 1)
+      const labW = 2.4, trackX = box.x + labW, trackW = box.w - labW - 0.8
+      const accents = ACCENTS(t, style)
+      items.forEach((it, i) => {
+        const cy = box.y + i * rowH + rowH / 2
+        const ac = accents[i % accents.length]
+        const v = clamp(Number(it.value) || 0, 0, 100)
+        els.push(E.text({ x: box.x, y: cy - 0.24, w: labW - 0.2, h: 0.48, text: it.label || '', valign: 'middle', fontFace: style.fonts.body, fontSize: 13.5, bold: true, color: t.ink, shrink: true }))
+        els.push(E.roundRect({ x: trackX, y: cy - 0.12, w: trackW, h: 0.24, radius: 0.12, fill: t.line, fillAlpha: t.onDark ? 0.5 : 1 }))
+        els.push(E.roundRect({ x: trackX, y: cy - 0.12, w: Math.max(0.24, trackW * v / 100), h: 0.24, radius: 0.12, fill: ac }))
+        els.push(E.text({ x: trackX + trackW + 0.12, y: cy - 0.24, w: 0.66, h: 0.48, text: v + '%', valign: 'middle', fontFace: style.fonts.title, fontSize: 14, bold: true, color: ensureContrast(ac, t.bg, 3) }))
+      })
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'architecture', label: '架构分层图', role: 'content',
+    fields: 'kicker, title, layers(2-5 层，从上到下，每层 {name(层名), items(模块名字符串数组 2-5 个)})。常见分层：接入层/应用层/服务层/数据层/基础设施',
+    sample: { kicker: '架构', title: '系统总体架构', layers: [{ name: '接入层', items: ['Web', '移动端', 'API 网关'] }, { name: '服务层', items: ['用户服务', '订单服务', '支付服务'] }, { name: '数据层', items: ['MySQL', 'Redis', '对象存储'] }] },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const layers = (content.layers || []).slice(0, 5)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.3, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.7 }
+      const gap = 0.2
+      const bandH = (box.h - gap * Math.max(layers.length - 1, 0)) / Math.max(layers.length, 1)
+      const accents = ACCENTS(t, style)
+      const labW = 1.8
+      layers.forEach((L, i) => {
+        const y = box.y + i * (bandH + gap)
+        const ac = accents[i % accents.length]
+        els.push(E.roundRect({ x: box.x, y, w: box.w, h: bandH, radius: style.radius, fill: t.onDark ? mix(t.card, ac, 0.14) : mix('FFFFFF', ac, 0.07), line: t.onDark ? null : { color: mix('FFFFFF', t.ink, 0.1), width: 1 } }))
+        els.push(E.roundRect({ x: box.x, y, w: labW, h: bandH, radius: style.radius, fill: ac }))
+        els.push(E.text({ x: box.x, y, w: labW, h: bandH, text: L.name || '', align: 'center', valign: 'middle', fontFace: style.fonts.title, fontSize: 13, bold: true, color: pickInk(ac), shrink: true }))
+        const items = (L.items || []).slice(0, 5)
+        const ix = box.x + labW + 0.28, iw = box.w - labW - 0.56
+        const cw = (iw - 0.2 * Math.max(items.length - 1, 0)) / Math.max(items.length, 1)
+        items.forEach((it, k) => {
+          const cx = ix + k * (cw + 0.2)
+          els.push(E.roundRect({ x: cx, y: y + bandH * 0.2, w: cw, h: bandH * 0.6, radius: 0.06, fill: t.onDark ? mix(t.bg, 'FFFFFF', 0.08) : 'FFFFFF', line: { color: ac, width: 1 } }))
+          els.push(E.text({ x: cx, y: y + bandH * 0.2, w: cw, h: bandH * 0.6, text: it, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 11, color: t.onDark ? t.ink : t.cardInk, shrink: true }))
+        })
+      })
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'imageShowcase', label: '大图展示', role: 'content',
+    fields: 'kicker, title, bullets(右侧 2-4 条要点), caption(图注，可选)。配图由系统注入',
+    sample: { kicker: '界面', title: '核心界面', bullets: ['要点一占位', '要点二占位', '要点三占位'], caption: '系统主界面' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.25, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.55 }
+      const imgW = box.w * 0.6
+      const imgBox = { x: box.x, y: box.y, w: imgW, h: box.h - 0.32 }
+      if (content.imageSrc) els.push(E.image({ x: imgBox.x, y: imgBox.y, w: imgBox.w, h: imgBox.h, src: content.imageSrc, sizing: 'cover', radius: style.radius, frame: true, frameColor: t.onDark ? mix(t.bg, t.ink, 0.3) : mix(t.card, t.ink, 0.2) }))
+      else els.push(...mediaPlaceholder(t, style, imgBox, 'monitor'))
+      els.push(E.text({ x: imgBox.x, y: box.y + box.h - 0.28, w: imgW, h: 0.28, text: content.caption || '示意图', align: 'center', fontFace: style.fonts.body, fontSize: 10.5, italic: true, color: t.muted }))
+      const rx = box.x + imgW + 0.45, rw = box.w - imgW - 0.45
+      const bullets = (content.bullets || []).slice(0, 4)
+      const rowH = box.h / Math.max(bullets.length, 1)
+      bullets.forEach((b, i) => {
+        const y = box.y + i * rowH
+        els.push(E.rect({ x: rx, y: y + rowH / 2 - 0.09, w: 0.18, h: 0.18, fill: t.accent }))
+        els.push(E.text({ x: rx + 0.4, y, w: rw - 0.44, h: rowH, text: b, fontFace: style.fonts.body, fontSize: 14, color: t.ink, valign: 'middle', lineSpacing: 19 }))
+      })
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'imageGrid', label: '图集', role: 'content',
+    fields: 'kicker, title, captions(2-4 条图注)。配图由系统注入',
+    sample: { kicker: '界面', title: '功能一览', captions: ['列表页', '详情页', '统计页', '设置页'] },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const caps = content.captions || []
+      const srcs = content.imageSrcs || []
+      const n = Math.max(Math.min(Math.max(srcs.length, caps.length, 2), 4), 1)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.25, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.6 }
+      const cols = n <= 2 ? n : 2
+      const rows = Math.ceil(n / cols)
+      const cells = gridCells(box, cols, rows, GUTTER)
+      for (let i = 0; i < n; i++) {
+        const cell = cells[i]
+        const imgBox = { x: cell.x, y: cell.y, w: cell.w, h: cell.h - 0.3 }
+        if (srcs[i]) els.push(E.image({ x: imgBox.x, y: imgBox.y, w: imgBox.w, h: imgBox.h, src: srcs[i], sizing: 'cover', radius: style.radius, frame: true, frameColor: t.onDark ? mix(t.bg, t.ink, 0.3) : mix(t.card, t.ink, 0.2) }))
+        else els.push(...mediaPlaceholder(t, style, imgBox, 'monitor'))
+        els.push(E.text({ x: cell.x, y: cell.y + cell.h - 0.28, w: cell.w, h: 0.26, text: caps[i] || '示意图', align: 'center', fontFace: style.fonts.body, fontSize: 10.5, italic: true, color: t.muted }))
+      }
       return { background: bg(t), elements: els }
     },
   },

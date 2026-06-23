@@ -83,6 +83,17 @@ export const E = {
       ...o,
     }
   },
+  chart(o = {}) {
+    return {
+      id: uid('ch'), type: 'chart', x: 1, y: 1, w: 5, h: 3,
+      ...baseDefaults(),
+      chartType: 'bar', // bar | barH | line | area | pie | doughnut
+      cats: [], series: [{ name: '', values: [] }], colors: [],
+      legend: true, showValue: false,
+      fontFace: 'Calibri', axisColor: '9AA4B2', gridColor: 'D9DEE6', valueColor: '6B7280', bgColor: 'FFFFFF',
+      ...o,
+    }
+  },
 }
 
 /** 把文本元素归一化成「逐段」数组，HTML 与 pptx 共用 */

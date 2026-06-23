@@ -78,6 +78,32 @@ export function ensureContrast(color, bg, min = 3) {
   return pickInk(bg)
 }
 
+export function hexToHsl(hex) {
+  let { r, g, b } = hexToRgb(hex)
+  r /= 255; g /= 255; b /= 255
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min
+  let h = 0, s = 0; const l = (max + min) / 2
+  if (d !== 0) {
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min)
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0)
+    else if (max === g) h = (b - r) / d + 2
+    else h = (r - g) / d + 4
+    h *= 60
+  }
+  return { h, s, l }
+}
+
+export function hslToHex(h, s, l) {
+  h = ((h % 360) + 360) % 360
+  const c = (1 - Math.abs(2 * l - 1)) * s
+  const x = c * (1 - Math.abs((h / 60) % 2 - 1))
+  const m = l - c / 2
+  let r = 0, g = 0, b = 0
+  if (h < 60) { r = c; g = x } else if (h < 120) { r = x; g = c } else if (h < 180) { g = c; b = x }
+  else if (h < 240) { g = x; b = c } else if (h < 300) { r = x; b = c } else { r = c; b = x }
+  return rgbToHex((r + m) * 255, (g + m) * 255, (b + m) * 255)
+}
+
 /** HEX → CSS rgba 字符串（供预览半透明） */
 export function rgba(hex, alpha = 1) {
   const { r, g, b } = hexToRgb(hex)

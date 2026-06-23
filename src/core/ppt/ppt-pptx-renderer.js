@@ -85,6 +85,46 @@ function renderImage(slide, el) {
   slide.addImage(opts)
 }
 
+const DEFAULT_CHART_COLORS = ['6366F1', '22D3EE', 'F59E0B', '34D399', 'F472B6', '818CF8']
+
+function renderChart(slide, el, pptx) {
+  const cats = el.cats || []
+  const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0 }
+  const series = (el.series || []).map(s => ({ name: s.name || '系列', labels: cats, values: (s.values || []).map(num) }))
+  if (!series.length || !cats.length) return
+  const colors = (el.colors && el.colors.length ? el.colors : DEFAULT_CHART_COLORS).map(hx)
+  const t = el.chartType || 'bar'
+  const typeStr = (t === 'barH') ? 'bar' : (t === 'pie') ? 'pie' : (t === 'doughnut') ? 'doughnut' : (t === 'area') ? 'area' : (t === 'line') ? 'line' : 'bar'
+  const data = (typeStr === 'pie' || typeStr === 'doughnut') ? [series[0]] : series
+  const opts = {
+    x: el.x, y: el.y, w: el.w, h: el.h,
+    chartColors: colors,
+    showLegend: !!el.legend, legendPos: 'b', legendColor: hx(el.valueColor || '6B7280'), legendFontSize: 9,
+    showValue: !!el.showValue,
+    showTitle: false,
+    dataLabelColor: hx(el.valueColor || '6B7280'), dataLabelFontSize: 9,
+    catAxisLabelColor: hx(el.axisColor || '9AA4B2'), valAxisLabelColor: hx(el.axisColor || '9AA4B2'),
+    catAxisLabelFontSize: 9, valAxisLabelFontSize: 9,
+  }
+  if (typeStr === 'bar') {
+    opts.barDir = (t === 'barH') ? 'bar' : 'col'
+    opts.barGapWidthPct = 40
+    opts.valGridLine = { color: hx(el.gridColor || 'D9DEE6'), size: 1 }
+    opts.catGridLine = { style: 'none' }
+  } else if (typeStr === 'line' || typeStr === 'area') {
+    opts.lineSize = 2.4
+    opts.valGridLine = { color: hx(el.gridColor || 'D9DEE6'), size: 1 }
+    opts.catGridLine = { style: 'none' }
+  } else if (typeStr === 'doughnut') {
+    opts.holeSize = 58
+    opts.showValue = false
+    opts.showPercent = !!el.showValue
+  } else if (typeStr === 'pie') {
+    opts.showPercent = !!el.showValue
+  }
+  slide.addChart(typeStr, data, opts)
+}
+
 function renderIcon(slide, el, pptx, iconCache) {
   let gx = el.x, gy = el.y, gw = el.w, gh = el.h
   if (el.chip) {
@@ -136,6 +176,7 @@ export async function renderDeckToPptx(deck) {
           case 'line': renderLine(slide, el, pptx); break
           case 'image': renderImage(slide, el); break
           case 'icon': renderIcon(slide, el, pptx, iconCache); break
+          case 'chart': renderChart(slide, el, pptx); break
         }
       } catch (e) { /* 单元素失败不阻断整套导出 */ }
     }
