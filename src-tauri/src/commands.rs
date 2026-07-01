@@ -199,6 +199,7 @@ pub struct LlmRequest {
     pub api_key: String,
     pub body: String,
     pub is_gemini: bool,
+    pub client_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -250,6 +251,11 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
     if req.is_gemini {
         builder = builder.header("x-goog-api-key", req.api_key.clone());
     }
+    if let Some(client_id) = req.client_id.as_ref() {
+        if !client_id.is_empty() {
+            builder = builder.header("X-Client-Id", client_id);
+        }
+    }
 
     let resp = match builder.body(req.body).send().await {
         Ok(r) => r,
@@ -285,6 +291,7 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
 pub struct LlmGetRequest {
     pub url: String,
     pub api_key: String,
+    pub client_id: Option<String>,
 }
 
 /// HTTP GET 请求（用于获取模型列表等）
@@ -308,6 +315,11 @@ pub async fn llm_get_request(req: LlmGetRequest) -> LlmResponse {
     let mut builder = client.get(&req.url);
     if !req.api_key.is_empty() {
         builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+    }
+    if let Some(client_id) = req.client_id.as_ref() {
+        if !client_id.is_empty() {
+            builder = builder.header("X-Client-Id", client_id);
+        }
     }
 
     let resp = match builder.send().await {

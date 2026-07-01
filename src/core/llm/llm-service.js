@@ -9,6 +9,15 @@ import { load } from '@tauri-apps/plugin-store'
 
 export const LLM_PROVIDERS = [
     {
+        id: 'ranzhu-cloud',
+        label: '云端账号',
+        baseUrl: '',
+        apiKeyRequired: false,
+        cloudManaged: true,
+        note: '通过服务端统一调度模型和额度，不会在客户端保存上游模型 API Key。',
+        models: [],
+    },
+    {
         id: 'openai',
         label: 'OpenAI',
         baseUrl: 'https://api.openai.com/v1',
@@ -222,6 +231,7 @@ export const LLM_PROVIDERS = [
 
 const STORE_FILE = 'llm-config.json'
 let _storeInstance = null
+const CLOUD_PROVIDER_ID = 'cloud_default'
 
 async function getStore() {
     if (!_storeInstance) {
@@ -366,6 +376,271 @@ export async function saveActiveSelection(providerId, modelId) {
     }
 }
 
+export async function loadCloudAccount() {
+    try {
+        const store = await getStore()
+        return await store.get('cloudAccount') || null
+    } catch {
+        return null
+    }
+}
+
+export async function saveCloudAccount(account) {
+    const store = await getStore()
+    await store.set('cloudAccount', account)
+    await store.save()
+}
+
+export async function clearCloudAccount() {
+    const store = await getStore()
+    await store.delete('cloudAccount')
+    await store.save()
+}
+
+export async function getCloudClientId() {
+    const store = await getStore()
+    let id = await store.get('cloudClientId')
+    if (!id) {
+        id = `cli_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(36).slice(2)}`}`
+        await store.set('cloudClientId', id)
+        await store.save()
+    }
+    return id
+}
+
+export function normalizeCloudServiceUrl(value) {
+    const raw = (value || '').trim().replace(/\/+$/, '')
+    if (!raw) return ''
+    return raw.replace(/\/v1$/, '')
+}
+
+async function cloudPost(serviceUrl, path, body, apiKey = '', clientId = '') {
+    const base = normalizeCloudServiceUrl(serviceUrl)
+    const result = await invoke('llm_request', {
+        req: {
+            url: `${base}${path}`,
+            apiKey,
+            body: JSON.stringify(body || {}),
+            isGemini: false,
+            clientId,
+        },
+    })
+    if (!result.success) {
+        throw new Error(parseCloudError(result))
+    }
+    return JSON.parse(result.body || '{}')
+}
+
+async function cloudGet(serviceUrl, path, apiKey = '', clientId = '') {
+    const base = normalizeCloudServiceUrl(serviceUrl)
+    const result = await invoke('llm_get_request', {
+        req: {
+            url: `${base}${path}`,
+            apiKey,
+            clientId,
+        },
+    })
+    if (!result.success) {
+        throw new Error(parseCloudError(result))
+    }
+    return JSON.parse(result.body || '{}')
+}
+
+function parseCloudError(result) {
+    const raw = result.error || result.body || `HTTP ${result.status || 0}`
+    try {
+        const body = JSON.parse(String(raw).replace(/^HTTP \d+:\s*/, ''))
+        return body.error?.message || body.error?.code || raw
+    } catch {
+        return raw
+    }
+}
+
+function nowSec() {
+    return Math.floor(Date.now() / 1000)
+}
+
+export async function createCloudLoginSession(serviceUrl) {
+    const clientId = await getCloudClientId()
+    const data = await cloudPost(serviceUrl, '/auth/wechat/session?client=desktop', {})
+    return { ...data, clientId, serviceUrl: normalizeCloudServiceUrl(serviceUrl) }
+}
+
+async function saveCloudSession(serviceUrl, data, clientId) {
+    const account = {
+        serviceUrl: normalizeCloudServiceUrl(serviceUrl),
+        clientId,
+        user: data.user,
+        accessToken: data.accessToken || data.token,
+        token: data.accessToken || data.token,
+        expiresAt: data.expiresAt || (nowSec() + (data.expiresIn || 1800)),
+        refreshToken: data.refreshToken,
+        refreshExpiresAt: data.refreshExpiresAt || (nowSec() + (data.refreshExpiresIn || 2592000)),
+        sessionId: data.sessionId,
+        updatedAt: Date.now(),
+    }
+    await saveCloudAccount(account)
+    return account
+}
+
+export async function pollCloudLoginSession(serviceUrl, sessionId, pollToken) {
+    const clientId = await getCloudClientId()
+    const path = `/auth/wechat/session/${encodeURIComponent(sessionId)}?pollToken=${encodeURIComponent(pollToken)}&clientId=${encodeURIComponent(clientId)}`
+    const data = await cloudGet(serviceUrl, path)
+    if (data.status === 'authenticated') {
+        const account = await saveCloudSession(serviceUrl, data, clientId)
+        return { ...data, account }
+    }
+    return data
+}
+
+export async function loginCloudAccount(serviceUrl, accountName, password) {
+    const clientId = await getCloudClientId()
+    const data = await cloudPost(serviceUrl, '/auth/login', {
+        account: accountName,
+        password,
+        clientId,
+        clientName: 'desktop',
+    })
+    const account = await saveCloudSession(serviceUrl, data, clientId)
+    await updateCloudProviderToken(account)
+    return { ...data, account }
+}
+
+export async function registerCloudAccount(serviceUrl, accountName, password, nickname = '') {
+    const clientId = await getCloudClientId()
+    const data = await cloudPost(serviceUrl, '/auth/register', {
+        account: accountName,
+        password,
+        nickname,
+        clientId,
+        clientName: 'desktop',
+    })
+    const account = await saveCloudSession(serviceUrl, data, clientId)
+    await updateCloudProviderToken(account)
+    return { ...data, account }
+}
+
+export async function sendCloudEmailCode(serviceUrl, email) {
+    return await cloudPost(serviceUrl, '/auth/email/code', { email })
+}
+
+export async function loginCloudEmailCode(serviceUrl, email, code) {
+    const clientId = await getCloudClientId()
+    const data = await cloudPost(serviceUrl, '/auth/email/login', {
+        email,
+        code,
+        clientId,
+        clientName: 'desktop',
+    })
+    const account = await saveCloudSession(serviceUrl, data, clientId)
+    await updateCloudProviderToken(account)
+    return { ...data, account }
+}
+
+export async function refreshCloudAccount(force = false) {
+    const account = await loadCloudAccount()
+    if (!account?.serviceUrl || !account?.refreshToken || !account?.clientId) return null
+    if (!force && account.expiresAt && account.expiresAt > nowSec() + 120) return account
+    const data = await cloudPost(account.serviceUrl, '/auth/refresh', {
+        refreshToken: account.refreshToken,
+        clientId: account.clientId,
+    })
+    const next = {
+        ...account,
+        user: data.user || account.user,
+        accessToken: data.accessToken || data.token,
+        token: data.accessToken || data.token,
+        expiresAt: data.expiresAt || (nowSec() + (data.expiresIn || 1800)),
+        refreshToken: data.refreshToken,
+        refreshExpiresAt: data.refreshExpiresAt || (nowSec() + (data.refreshExpiresIn || 2592000)),
+        sessionId: data.sessionId || account.sessionId,
+        updatedAt: Date.now(),
+    }
+    await saveCloudAccount(next)
+    await updateCloudProviderToken(next)
+    return next
+}
+
+export async function ensureCloudAccessToken(force = false) {
+    return await refreshCloudAccount(force)
+}
+
+export async function logoutCloudAccount() {
+    const account = await loadCloudAccount()
+    if (account?.serviceUrl && account?.refreshToken) {
+        try {
+            await cloudPost(account.serviceUrl, '/auth/logout', { refreshToken: account.refreshToken }, account.accessToken || account.token || '', account.clientId || '')
+        } catch {
+            // 本地仍然清理登录态
+        }
+    }
+    await clearCloudAccount()
+    const providers = await loadProviderConfigs()
+    const target = providers.find(p => p.id === CLOUD_PROVIDER_ID)
+    if (target) {
+        target.apiKey = ''
+        target.models = []
+        target.activeModelId = ''
+        await saveProviderConfigs(providers)
+    }
+}
+
+export async function syncCloudProvider(serviceUrl) {
+    let account = await loadCloudAccount()
+    if (!account) throw new Error('请先登录云端账号')
+    account = await ensureCloudAccessToken()
+    const data = await cloudGet(serviceUrl || account.serviceUrl, '/v1/models', account.accessToken || account.token || '', account.clientId || '')
+    const models = Array.isArray(data.data) ? data.data.map(m => ({
+        id: m.id,
+        label: m.id,
+        capabilities: {},
+        contextLength: 32768,
+        maxOutputTokens: 4096,
+    })) : []
+    const provider = {
+        id: CLOUD_PROVIDER_ID,
+        providerId: 'ranzhu-cloud',
+        label: '云端账号',
+        baseUrl: `${normalizeCloudServiceUrl(serviceUrl || account.serviceUrl)}/v1`,
+        apiKey: account.accessToken || account.token || '',
+        cloudManaged: true,
+        clientId: account.clientId || '',
+        models,
+        activeModelId: models[0]?.id || '',
+        sortOrder: -100,
+    }
+    await upsertProviderConfig(provider)
+    if (models[0]?.id) await saveActiveSelection(provider.id, models[0].id)
+    return provider
+}
+
+export async function checkinCloudAccount() {
+    const account = await ensureCloudAccessToken()
+    if (!account) throw new Error('请先登录云端账号')
+    const data = await cloudPost(account.serviceUrl, '/checkin', {}, account.accessToken || account.token || '', account.clientId || '')
+    const next = {
+        ...account,
+        user: {
+            ...(account.user || {}),
+            creditBalance: data.balance ?? account.user?.creditBalance,
+        },
+        updatedAt: Date.now(),
+    }
+    await saveCloudAccount(next)
+    return data
+}
+
+async function updateCloudProviderToken(account) {
+    const providers = await loadProviderConfigs()
+    const target = providers.find(p => p.id === CLOUD_PROVIDER_ID || p.cloudManaged)
+    if (!target) return
+    target.apiKey = account.accessToken || account.token || ''
+    target.clientId = account.clientId || ''
+    target.baseUrl = `${normalizeCloudServiceUrl(account.serviceUrl)}/v1`
+    await saveProviderConfigs(providers)
+}
+
 /**
  * 从厂商配置 + 模型 ID 构建可调用的 config 对象
  * 供 callLlm / fillApiDocPlaceholders 等使用
@@ -376,8 +651,11 @@ export function getResolvedConfig(providerCfg, modelId) {
     const modelObj = providerCfg.models.find(m => m.id === resolvedModelId)
     return {
         providerId: providerCfg.providerId,
+        providerConfigId: providerCfg.id,
         baseUrl: providerCfg.baseUrl,
         apiKey: providerCfg.apiKey,
+        cloudManaged: !!providerCfg.cloudManaged || providerCfg.providerId === 'ranzhu-cloud',
+        clientId: providerCfg.clientId || '',
         model: resolvedModelId,
         maxOutputTokens: modelObj?.maxOutputTokens || 0,
     }
@@ -515,7 +793,14 @@ function inferContextLengthFromId(modelId) {
  * @returns {Promise<{success: boolean, models: ModelDef[], message: string}>}
  */
 export async function detectModels(providerCfg) {
-    const { providerId, baseUrl, apiKey } = providerCfg
+    if (providerCfg.cloudManaged || providerCfg.providerId === 'ranzhu-cloud') {
+        const account = await ensureCloudAccessToken()
+        if (account) {
+            providerCfg.apiKey = account.accessToken || account.token || providerCfg.apiKey
+            providerCfg.clientId = account.clientId || providerCfg.clientId
+        }
+    }
+    const { providerId, baseUrl, apiKey, clientId } = providerCfg
     if (!baseUrl) return { success: false, models: [], message: '请先填写 API 地址' }
 
     const base = baseUrl.replace(/\/+$/, '')
@@ -529,7 +814,7 @@ export async function detectModels(providerCfg) {
 
     try {
         const result = await invoke('llm_get_request', {
-            req: { url: modelsUrl, apiKey: apiKey || '' },
+            req: { url: modelsUrl, apiKey: apiKey || '', clientId: clientId || '' },
         })
 
         if (!result.success) {
@@ -741,7 +1026,7 @@ function friendlyContextLimitMessage(body) {
  *   - jsonMode=false 时强制不发送 response_format（用于纯文本输出场景）
  */
 export async function callLlm(config, messages, options = {}) {
-    const { baseUrl, apiKey, model, providerId } = config
+    let { baseUrl, apiKey, model, providerId, clientId } = config
     const {
         temperature = 0.3,
         maxTokens = 4096,
@@ -749,6 +1034,15 @@ export async function callLlm(config, messages, options = {}) {
         returnMeta = false,
         jsonMode = true,
     } = options
+
+    if (config.cloudManaged || providerId === 'ranzhu-cloud') {
+        const account = await ensureCloudAccessToken()
+        if (account) {
+            apiKey = account.accessToken || account.token || apiKey
+            clientId = account.clientId || clientId || ''
+            if (account.serviceUrl) baseUrl = `${normalizeCloudServiceUrl(account.serviceUrl)}/v1`
+        }
+    }
 
     const base = baseUrl.replace(/\/+$/, '')
     const isGemini = providerId === 'gemini' || base.includes('generativelanguage.googleapis.com')
@@ -774,7 +1068,7 @@ export async function callLlm(config, messages, options = {}) {
         if (signal?.aborted) throw new DOMException('操作已取消', 'AbortError')
 
         const invokePromise = invoke('llm_request', {
-            req: { url, apiKey, body: JSON.stringify(reqBody), isGemini },
+            req: { url, apiKey, body: JSON.stringify(reqBody), isGemini, clientId: clientId || '' },
         })
 
         try {

@@ -3,7 +3,7 @@
  * 通过 App.vue provide 注入所有子组件，解决 keep-alive 下跨页面状态同步问题
  */
 import { reactive } from 'vue'
-import { loadProviderConfigs, loadActiveSelection, saveActiveSelection } from './llm/llm-service.js'
+import { ensureCloudAccessToken, loadProviderConfigs, loadActiveSelection, saveActiveSelection } from './llm/llm-service.js'
 
 export const globalStore = reactive({
   providerConfigs: [],
@@ -16,6 +16,11 @@ export const globalStore = reactive({
  * 初始化全局状态（App.vue mounted 调用一次）
  */
 export async function initStore() {
+  try {
+    await ensureCloudAccessToken()
+  } catch (e) {
+    console.warn('云端账号刷新失败:', e)
+  }
   globalStore.providerConfigs = await loadProviderConfigs()
   const { providerId, modelId } = await loadActiveSelection()
   if (globalStore.providerConfigs.length > 0) {

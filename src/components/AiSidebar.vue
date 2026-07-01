@@ -154,7 +154,7 @@
 <script>
 import { ClipboardList, MessageCircle, Bot, Send, Brain, Trash2, ImagePlus, X, Plus, History } from 'lucide-vue-next'
 import { invoke } from '@tauri-apps/api/core'
-import { getResolvedConfig } from '../core/llm/llm-service.js'
+import { ensureCloudAccessToken, getResolvedConfig, normalizeCloudServiceUrl } from '../core/llm/llm-service.js'
 import {
   createConversation, getConversations, getMessages,
   addMessage, updateConversationTitle, deleteConversation,
@@ -464,7 +464,15 @@ export default {
     },
 
     async callChatLlm(config, messages) {
-      const { baseUrl, apiKey, model, providerId } = config
+      let { baseUrl, apiKey, model, providerId, clientId } = config
+      if (config.cloudManaged || providerId === 'ranzhu-cloud') {
+        const account = await ensureCloudAccessToken()
+        if (account) {
+          apiKey = account.accessToken || account.token || apiKey
+          clientId = account.clientId || clientId || ''
+          if (account.serviceUrl) baseUrl = `${normalizeCloudServiceUrl(account.serviceUrl)}/v1`
+        }
+      }
       const base = baseUrl.replace(/\/+$/, '')
       const isGemini = providerId === 'gemini' || base.includes('generativelanguage.googleapis.com')
 
@@ -486,7 +494,7 @@ export default {
         }
       }
 
-      const result = await invoke('llm_request', { req: { url: `${base}/chat/completions`, apiKey, body: JSON.stringify(reqBody), isGemini } })
+      const result = await invoke('llm_request', { req: { url: `${base}/chat/completions`, apiKey, body: JSON.stringify(reqBody), isGemini, clientId: clientId || '' } })
 
       if (!result.success) {
         let errMsg = `API 错误 (${result.status})`
