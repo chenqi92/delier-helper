@@ -410,9 +410,10 @@ export default {
         return
       }
 
+      const controller = createAiController()
       this.aiProcessing = true
       window.dispatchEvent(new Event('ai-fill-start'))
-      this.aiController = createAiController()
+      this.aiController = controller
       const modelLabel = provider.models.find(m => m.id === config.model)?.label || config.model
       this.aiProgressText = `使用 ${provider.label} / ${modelLabel}...`
 
@@ -430,15 +431,26 @@ export default {
             // 触发 Vue 响应式更新
             this.sections = [...this.sections]
           },
-          this.aiController,
+          controller,
         )
-        this.showToast('文档生成完成！', 'success')
+        if (controller.cancelled) {
+          this.showToast('已停止生成', 'info')
+        } else {
+          this.showToast('文档生成完成！', 'success')
+        }
       } catch (e) {
-        this.showToast('生成失败: ' + String(e), 'error')
+        if (e?.name === 'AbortError' || controller.cancelled) {
+          this.showToast('已停止生成', 'info')
+        } else {
+          this.showToast('生成失败: ' + String(e), 'error')
+        }
+      } finally {
+        if (this.aiController === controller) {
+          this.aiProcessing = false
+          this.aiProgressText = ''
+          this.aiController = null
+        }
       }
-      this.aiProcessing = false
-      this.aiProgressText = ''
-      this.aiController = null
     },
     async generateSingle(sectionId) {
       if (this.aiProcessing) return
@@ -451,7 +463,9 @@ export default {
       const section = findSectionById(this.sections, sectionId)
       if (!section || !this.scanResult) return
 
+      const controller = createAiController()
       this.aiProcessing = true
+      this.aiController = controller
       section.generating = true
       section.error = null
       this.sections = [...this.sections]
@@ -463,7 +477,7 @@ export default {
         const defaultMaxTokens = section.type === 'diagram' ? 4096 : 16384
         const maxTokens = config.maxOutputTokens || defaultMaxTokens
         const temperature = SECTION_TEMPERATURE[section.type] ?? 0.5
-        const responseText = await callLlm(config, messages, { maxTokens, temperature, jsonMode: false })
+        const responseText = await callLlm(config, messages, { maxTokens, temperature, jsonMode: false, signal: controller.signal })
         applyDocSectionResult(responseText, section)
         section.generating = false
         section.error = null
@@ -476,14 +490,23 @@ export default {
         }
         this.showToast(`${section.number} ${section.title} 生成完成`, 'success')
       } catch (e) {
+        if (e?.name === 'AbortError' || controller.cancelled) {
+          this.addLog(`[取消] ${section.number} ${section.title} 已停止`, 'warn')
+          this.showToast('已停止生成', 'info')
+        } else {
+          section.error = e.message || String(e)
+          this.addLog(`[失败] ${section.number} ${section.title}: ${e.message}`, 'error')
+          this.showToast('生成失败: ' + String(e), 'error')
+        }
+      } finally {
         section.generating = false
-        section.error = e.message || String(e)
         this.sections = [...this.sections]
-        this.addLog(`[失败] ${section.number} ${section.title}: ${e.message}`, 'error')
-        this.showToast('生成失败: ' + String(e), 'error')
+        if (this.aiController === controller) {
+          this.aiProcessing = false
+          this.aiProgressText = ''
+          this.aiController = null
+        }
       }
-      this.aiProcessing = false
-      this.aiProgressText = ''
     },
     toggleAiPause() {
       if (this.aiController) {
@@ -491,7 +514,10 @@ export default {
       }
     },
     cancelAi() {
-      if (this.aiController) this.aiController.cancel()
+      if (!this.aiController) return
+      this.aiController.cancel()
+      this.aiProcessing = false
+      this.aiProgressText = '已停止'
     },
 
     // ===== 导出 =====

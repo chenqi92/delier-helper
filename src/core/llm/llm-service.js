@@ -118,7 +118,7 @@ export const LLM_PROVIDERS = [
         id: 'claude',
         label: 'Anthropic (Claude)',
         baseUrl: 'https://api.anthropic.com/v1',
-        note: 'OpenAI 兼容请用代理；最新模型 ID 以官方文档为准，或点「检测模型」拉取',
+        note: '支持官方 Anthropic Messages API；OpenAI 兼容代理仍可用自定义厂商接入，最新模型 ID 以官方文档或「检测模型」为准',
         models: [
             { id: 'claude-opus-4-7', label: 'Claude Opus 4.7', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1000000 },
             { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true }, contextLength: 200000 },
@@ -414,6 +414,116 @@ export function normalizeCloudServiceUrl(value) {
     return raw.replace(/\/v1$/, '')
 }
 
+function getUrlPathname(value) {
+    try {
+        return new URL(value).pathname.replace(/\/+$/, '')
+    } catch {
+        return value.replace(/^https?:\/\/[^/]+/i, '').replace(/\/+$/, '')
+    }
+}
+
+function shouldAppendV1ForCustom(providerId, baseUrl) {
+    if (providerId !== 'custom') return false
+    if (!/^https?:\/\//i.test(baseUrl)) return false
+    const path = getUrlPathname(baseUrl)
+    if (!path || path === '/') return true
+    return !/(^|\/)(v\d+(?:beta)?|api\/v\d+|compatible-mode\/v\d+|openai)$/i.test(path)
+}
+
+function normalizeOpenAiCompatibleBaseUrl(baseUrl, providerId) {
+    const base = (baseUrl || '').trim().replace(/\/+$/, '')
+    if (!base) return ''
+    return shouldAppendV1ForCustom(providerId, base) ? `${base}/v1` : base
+}
+
+const LLM_PROTOCOLS = {
+    OPENAI: 'openai',
+    ANTHROPIC: 'anthropic',
+}
+
+function isAnthropicCompatibleEndpoint(providerId, baseUrl) {
+    if (providerId === 'claude') return true
+    const raw = (baseUrl || '').trim()
+    if (!raw) return false
+    try {
+        const url = new URL(raw)
+        const host = url.hostname.toLowerCase()
+        const path = url.pathname.toLowerCase()
+        return host === 'api.anthropic.com'
+            || host.endsWith('.anthropic.com')
+            || /(^|\/)anthropic(\/|$)/.test(path)
+    } catch {
+        return /(^|\/)anthropic(\/|$)/i.test(raw)
+    }
+}
+
+function getLlmProtocol(providerId, baseUrl) {
+    return isAnthropicCompatibleEndpoint(providerId, baseUrl)
+        ? LLM_PROTOCOLS.ANTHROPIC
+        : LLM_PROTOCOLS.OPENAI
+}
+
+function normalizeAnthropicBaseUrl(baseUrl) {
+    let base = (baseUrl || '').trim().replace(/\/+$/, '')
+    if (!base) return ''
+    base = base.replace(/\/messages$/i, '').replace(/\/v1\/messages$/i, '/v1')
+
+    try {
+        const url = new URL(base)
+        const host = url.hostname.toLowerCase()
+        const path = url.pathname.replace(/\/+$/, '')
+        if ((host === 'api.anthropic.com' || host.endsWith('.anthropic.com')) && (!path || path === '/')) {
+            url.pathname = '/v1'
+            return url.toString().replace(/\/+$/, '')
+        }
+    } catch {
+        // ignore URL parse failures; custom local endpoints can still be valid for reqwest
+    }
+    return base
+}
+
+function normalizeLlmBaseUrl(baseUrl, providerId) {
+    const protocol = getLlmProtocol(providerId, baseUrl)
+    return protocol === LLM_PROTOCOLS.ANTHROPIC
+        ? normalizeAnthropicBaseUrl(baseUrl)
+        : normalizeOpenAiCompatibleBaseUrl(baseUrl, providerId)
+}
+
+function responsePreview(body, limit = 200) {
+    return String(body || '')
+        .replace(/\s+/g, ' ')
+        .slice(0, limit)
+}
+
+function parseJsonBody(body, label = '响应') {
+    const raw = String(body || '')
+    if (!raw.trim()) throw new Error(`${label}为空`)
+    try {
+        return JSON.parse(raw)
+    } catch (e) {
+        const preview = responsePreview(raw)
+        if (/�|[\u0000-\u0008\u000e-\u001f]/.test(preview)) {
+            throw new Error(`${label}不是可解析 JSON，可能是压缩响应未解码或接口地址不兼容: ${preview}`)
+        }
+        throw new Error(`${label}不是有效 JSON: ${e.message}. ${preview}`)
+    }
+}
+
+function parseHttpErrorMessage(result) {
+    const raw = result?.error || result?.body || `HTTP ${result?.status || 0}`
+    const bodyText = String(raw).replace(/^HTTP \d+:\s*/, '')
+    try {
+        const body = JSON.parse(bodyText)
+        if (typeof body.error === 'string') return body.error
+        return body.error?.message
+            || body.error?.type
+            || body.message
+            || raw
+    } catch {
+        return raw
+    }
+}
+
 async function cloudPost(serviceUrl, path, body, apiKey = '', clientId = '') {
     const base = normalizeCloudServiceUrl(serviceUrl)
     const result = await invoke('llm_request', {
@@ -428,7 +538,7 @@ async function cloudPost(serviceUrl, path, body, apiKey = '', clientId = '') {
     if (!result.success) {
         throw new Error(parseCloudError(result))
     }
-    return JSON.parse(result.body || '{}')
+    return parseJsonBody(result.body || '{}', '云端响应')
 }
 
 async function cloudGet(serviceUrl, path, apiKey = '', clientId = '') {
@@ -443,7 +553,7 @@ async function cloudGet(serviceUrl, path, apiKey = '', clientId = '') {
     if (!result.success) {
         throw new Error(parseCloudError(result))
     }
-    return JSON.parse(result.body || '{}')
+    return parseJsonBody(result.body || '{}', '云端响应')
 }
 
 function parseCloudError(result) {
@@ -652,7 +762,7 @@ export function getResolvedConfig(providerCfg, modelId) {
     return {
         providerId: providerCfg.providerId,
         providerConfigId: providerCfg.id,
-        baseUrl: providerCfg.baseUrl,
+        baseUrl: normalizeLlmBaseUrl(providerCfg.baseUrl, providerCfg.providerId),
         apiKey: providerCfg.apiKey,
         cloudManaged: !!providerCfg.cloudManaged || providerCfg.providerId === 'ranzhu-cloud',
         clientId: providerCfg.clientId || '',
@@ -787,6 +897,123 @@ function inferContextLengthFromId(modelId) {
     return 0
 }
 
+function buildModelEndpointCandidates(base, providerId, isOllama) {
+    const candidates = []
+    const push = (url, normalizedBaseUrl = base) => {
+        if (!candidates.some(item => item.url === url)) {
+            candidates.push({ url, normalizedBaseUrl })
+        }
+    }
+
+    if (isOllama) {
+        push(`${base.replace(/\/v1$/, '')}/api/tags`, base)
+        return candidates
+    }
+
+    push(`${base}/models`, base)
+    if (shouldAppendV1ForCustom(providerId, base)) {
+        push(`${base}/v1/models`, `${base}/v1`)
+    }
+    return candidates
+}
+
+function buildAnthropicModelEndpointCandidates(base) {
+    const candidates = []
+    const normalized = normalizeAnthropicBaseUrl(base)
+    const push = (url, normalizedBaseUrl) => {
+        if (!candidates.some(item => item.url === url)) {
+            candidates.push({ url, normalizedBaseUrl })
+        }
+    }
+    push(`${normalized}/models`, normalized)
+    if (!/\/v1$/i.test(normalized)) {
+        push(`${normalized}/v1/models`, `${normalized}/v1`)
+    }
+    return candidates
+}
+
+function readModelArray(data, isOllama) {
+    if (isOllama && Array.isArray(data.models)) return data.models
+    if (Array.isArray(data.data)) return data.data
+    if (Array.isArray(data.models)) return data.models
+    if (Array.isArray(data)) return data
+    return []
+}
+
+function normalizeDetectedModel(raw) {
+    const m = typeof raw === 'string' ? { id: raw } : (raw || {})
+    const id = m.id || m.name || m.model || m.slug
+    if (!id || typeof id !== 'string') return null
+
+    const arch = m.architecture || {}
+    const details = m.details || {}
+    const topProvider = m.top_provider || m.topProvider || {}
+    const ctx = m.context_length
+        || m.contextLength
+        || details.context_length
+        || details.contextLength
+        || m.max_model_len
+        || m.maxModelLen
+        || m.max_context_length
+        || m.maxContextLength
+        || m.context_window
+        || m.contextWindow
+        || m.max_input_tokens
+        || m.maxInputTokens
+        || m.input_token_limit
+        || m.inputTokenLimit
+        || arch.context_length
+        || arch.max_input_tokens
+        || topProvider.context_length
+        || inferContextLengthFromId(id)
+        || 32768
+
+    const caps = m.capabilities && !Array.isArray(m.capabilities)
+        ? { ...m.capabilities }
+        : {}
+
+    const modality = String(arch.modality || m.modality || '').toLowerCase()
+    const families = Array.isArray(details.families)
+        ? details.families.map(v => String(v).toLowerCase())
+        : []
+    const inputMods = [
+        ...(Array.isArray(arch.input_modalities) ? arch.input_modalities : []),
+        ...(Array.isArray(m.input_modalities) ? m.input_modalities : []),
+        ...(Array.isArray(m.inputModalities) ? m.inputModalities : []),
+    ].map(v => String(v).toLowerCase())
+
+    if (modality.includes('image')
+        || inputMods.includes('image')
+        || inputMods.includes('video')
+        || families.some(f => /clip|llava|vision|mllama/i.test(f))) {
+        caps.multimodal = true
+    }
+    inferCapabilitiesFromId(id, caps)
+    if (ctx >= 100000) caps.longContext = true
+
+    const outputTokens = m.max_output_tokens
+        || m.maxOutputTokens
+        || m.output_token_limit
+        || m.outputTokenLimit
+        || topProvider.max_completion_tokens
+        || topProvider.maxCompletionTokens
+
+    const model = {
+        id,
+        label: m.label || m.display_name || m.displayName || m.name || id,
+        capabilities: caps,
+        contextLength: ctx,
+    }
+    if (outputTokens) model.maxOutputTokens = outputTokens
+    return model
+}
+
+function normalizeDetectedModels(data, isOllama) {
+    return readModelArray(data, isOllama)
+        .map(normalizeDetectedModel)
+        .filter(Boolean)
+}
+
 /**
  * 自动检测本地 LLM 服务的可用模型列表
  * @param {Object} providerCfg - 包含 providerId, baseUrl, apiKey 的配置
@@ -804,94 +1031,57 @@ export async function detectModels(providerCfg) {
     if (!baseUrl) return { success: false, models: [], message: '请先填写 API 地址' }
 
     const base = baseUrl.replace(/\/+$/, '')
-    const preset = LLM_PROVIDERS.find(p => p.id === providerId)
 
-    // Ollama 使用 /api/tags 接口
     const isOllama = providerId === 'ollama' || base.includes(':11434')
-    const modelsUrl = isOllama
-        ? base.replace(/\/v1$/, '') + '/api/tags'
-        : base + '/models'
+    const protocol = getLlmProtocol(providerId, base)
+    const isAnthropic = protocol === LLM_PROTOCOLS.ANTHROPIC
+    const endpoints = isAnthropic
+        ? buildAnthropicModelEndpointCandidates(base)
+        : buildModelEndpointCandidates(base, providerId, isOllama)
+    const failures = []
 
-    try {
-        const result = await invoke('llm_get_request', {
-            req: { url: modelsUrl, apiKey: apiKey || '', clientId: clientId || '' },
-        })
-
-        if (!result.success) {
-            return { success: false, models: [], message: result.error || `连接失败 (${result.status})` }
-        }
-
-        const data = JSON.parse(result.body)
-        let models = []
-
-        if (isOllama && Array.isArray(data.models)) {
-            // Ollama 格式: { models: [{ name, size, details: { families, ... }, ... }] }
-            models = data.models.map(m => {
-                const id = m.name || m.model
-                const details = m.details || {}
-                const families = Array.isArray(details.families) ? details.families : []
-                const caps = {}
-                // Ollama families 中包含 'clip' 或 'llava' 表示多模态
-                if (families.some(f => /clip|llava|vision|mllama/i.test(f))) {
-                    caps.multimodal = true
-                }
-                // 从模型名推断能力
-                inferCapabilitiesFromId(id, caps)
-                return {
-                    id,
-                    label: id.split(':')[0],
-                    capabilities: caps,
-                    contextLength: details.context_length || m.context_length || inferContextLengthFromId(id) || 32768,
-                }
+    for (const endpoint of endpoints) {
+        try {
+            const result = await invoke('llm_get_request', {
+                req: { url: endpoint.url, apiKey: apiKey || '', isAnthropic, clientId: clientId || '' },
             })
-        } else if (Array.isArray(data.data)) {
-            // OpenAI 兼容格式: { data: [{ id, context_length?, architecture?, ... }] }
-            models = data.data.map(m => {
-                const caps = {}
-                // 优先级: API 字段 → 按模型家族推断 → 32768 兜底
-                const ctx = m.context_length
-                    || m.max_model_len
-                    || m.max_input_tokens
-                    || (m.architecture && (m.architecture.context_length || m.architecture.max_input_tokens))
-                    || inferContextLengthFromId(m.id)
-                    || 32768
 
-                // OpenRouter / 部分平台返回 architecture.modality
-                const arch = m.architecture || {}
-                const modality = (arch.modality || '').toLowerCase()
-                const inputMods = Array.isArray(arch.input_modalities) ? arch.input_modalities : []
+            if (!result.success) {
+                failures.push({
+                    status: result.status,
+                    message: result.error || `连接失败 (${result.status})`,
+                })
+                continue
+            }
 
-                // 多模态检测
-                if (modality.includes('image') || inputMods.includes('image') || inputMods.includes('video')) {
-                    caps.multimodal = true
-                }
+            const data = parseJsonBody(result.body, '模型列表响应')
+            const models = normalizeDetectedModels(data, isOllama)
 
-                // 从模型 ID 推断更多能力
-                inferCapabilitiesFromId(m.id, caps)
+            if (models.length === 0) {
+                failures.push({ status: result.status, message: '服务响应正常但未载入任何模型' })
+                continue
+            }
 
-                // 长上下文标记
-                if (ctx >= 100000) {
-                    caps.longContext = true
-                }
-
-                return {
-                    id: m.id,
-                    label: m.id,
-                    capabilities: caps,
-                    contextLength: ctx,
-                }
-            })
-        } else {
-            return { success: false, models: [], message: '无法解析模型列表响应' }
+            const pathNote = endpoint.normalizedBaseUrl !== base
+                ? `，已自动使用 ${endpoint.normalizedBaseUrl}`
+                : ''
+            return {
+                success: true,
+                models,
+                baseUrl: endpoint.normalizedBaseUrl,
+                message: `检测到 ${models.length} 个模型${pathNote}`,
+            }
+        } catch (e) {
+            failures.push({ status: 0, message: e.message || String(e) })
         }
+    }
 
-        if (models.length === 0) {
-            return { success: false, models: [], message: '服务响应正常但未载入任何模型' }
-        }
-
-        return { success: true, models, message: `检测到 ${models.length} 个模型` }
-    } catch (e) {
-        return { success: false, models: [], message: `检测失败: ${e.message || e}` }
+    const authFailure = failures.find(f => f.status === 401 || f.status === 403)
+    const lastFailure = failures[failures.length - 1]
+    return {
+        success: false,
+        models: [],
+        message: `检测失败: ${(authFailure || lastFailure)?.message || '无法解析模型列表响应'}`,
     }
 }
 
@@ -1016,6 +1206,135 @@ function friendlyContextLimitMessage(body) {
     ].join('\n')
 }
 
+function textFromMessageContent(content) {
+    if (typeof content === 'string') return content
+    if (Array.isArray(content)) {
+        return content
+            .filter(part => part?.type === 'text')
+            .map(part => part.text || '')
+            .filter(Boolean)
+            .join('\n')
+    }
+    return content == null ? '' : String(content)
+}
+
+function parseDataImageUrl(value) {
+    const match = String(value || '').match(/^data:(image\/[\w.+-]+);base64,(.+)$/)
+    if (!match) return null
+    return { mediaType: match[1], data: match[2] }
+}
+
+function toAnthropicContentBlocks(content) {
+    if (typeof content === 'string') {
+        return content ? [{ type: 'text', text: content }] : [{ type: 'text', text: '' }]
+    }
+    if (!Array.isArray(content)) {
+        return [{ type: 'text', text: content == null ? '' : String(content) }]
+    }
+
+    const blocks = []
+    for (const part of content) {
+        if (!part) continue
+        if (part.type === 'text') {
+            blocks.push({ type: 'text', text: part.text || '' })
+            continue
+        }
+        if (part.type === 'image_url') {
+            const image = parseDataImageUrl(part.image_url?.url || part.url)
+            if (image) {
+                blocks.push({
+                    type: 'image',
+                    source: {
+                        type: 'base64',
+                        media_type: image.mediaType,
+                        data: image.data,
+                    },
+                })
+            }
+        }
+    }
+    return blocks.length ? blocks : [{ type: 'text', text: '' }]
+}
+
+function mergeAdjacentAnthropicMessages(messages) {
+    const merged = []
+    for (const msg of messages) {
+        const last = merged[merged.length - 1]
+        if (last && last.role === msg.role) {
+            last.content = [...last.content, ...msg.content]
+        } else {
+            merged.push({ ...msg, content: [...msg.content] })
+        }
+    }
+    return merged
+}
+
+function buildAnthropicRequestBody(model, messages, { maxTokens }) {
+    const systemParts = []
+    const anthMessages = []
+
+    for (const msg of messages || []) {
+        if (msg.role === 'system') {
+            const text = textFromMessageContent(msg.content)
+            if (text) systemParts.push(text)
+            continue
+        }
+        if (msg.role !== 'user' && msg.role !== 'assistant') continue
+        anthMessages.push({
+            role: msg.role,
+            content: toAnthropicContentBlocks(msg.content),
+        })
+    }
+
+    const body = {
+        model,
+        max_tokens: maxTokens,
+        messages: mergeAdjacentAnthropicMessages(anthMessages),
+    }
+    if (systemParts.length) body.system = systemParts.join('\n\n')
+    return body
+}
+
+function buildOpenAiRequestBody(model, messages, { temperature, maxTokens, jsonMode, providerId, apiKey, isGemini, deepThinking }) {
+    const reqBody = {
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+    }
+
+    const localIds = ['ollama', 'lmstudio', 'vllm', 'custom']
+    const skipJsonFormat = !jsonMode || isGemini || localIds.includes(providerId) || !apiKey
+    if (!skipJsonFormat) {
+        reqBody.response_format = { type: 'json_object' }
+    }
+
+    if (deepThinking) {
+        const modelId = String(model || '')
+        if (providerId === 'openai' && (modelId.startsWith('o') || modelId.includes('/o'))) {
+            reqBody.reasoning_effort = 'high'
+        } else {
+            reqBody.enable_thinking = true
+        }
+    }
+
+    return reqBody
+}
+
+function getAnthropicTextAndThinking(data) {
+    const blocks = Array.isArray(data.content) ? data.content : []
+    const text = []
+    const thinking = []
+    for (const block of blocks) {
+        if (!block) continue
+        if (block.type === 'text' && block.text) text.push(block.text)
+        if ((block.type === 'thinking' || block.type === 'redacted_thinking') && block.thinking) {
+            thinking.push(block.thinking)
+        }
+    }
+    return { content: text.join('\n'), thinking: thinking.join('\n') || null }
+}
+
 /**
  * 调用 LLM chat completions API
  * 通过 Rust 后端 invoke 发起请求，绕过前端 fetch 的 header 限制
@@ -1033,6 +1352,7 @@ export async function callLlm(config, messages, options = {}) {
         signal,
         returnMeta = false,
         jsonMode = true,
+        deepThinking = false,
     } = options
 
     if (config.cloudManaged || providerId === 'ranzhu-cloud') {
@@ -1044,23 +1364,23 @@ export async function callLlm(config, messages, options = {}) {
         }
     }
 
-    const base = baseUrl.replace(/\/+$/, '')
+    const protocol = getLlmProtocol(providerId, baseUrl)
+    const isAnthropic = protocol === LLM_PROTOCOLS.ANTHROPIC
+    const base = normalizeLlmBaseUrl(baseUrl, providerId)
     const isGemini = providerId === 'gemini' || base.includes('generativelanguage.googleapis.com')
-    const url = `${base}/chat/completions`
+    const url = isAnthropic ? `${base}/messages` : `${base}/chat/completions`
 
-    const reqBody = {
-        model,
-        messages,
-        temperature,
-        max_tokens: maxTokens,
-    }
-
-    // response_format 仅云端厂商支持，本地部署（Ollama/LM Studio/vLLM）和 Gemini 不支持
-    const localIds = ['ollama', 'lmstudio', 'vllm', 'custom']
-    const skipJsonFormat = !jsonMode || isGemini || localIds.includes(providerId) || !apiKey
-    if (!skipJsonFormat) {
-        reqBody.response_format = { type: 'json_object' }
-    }
+    const reqBody = isAnthropic
+        ? buildAnthropicRequestBody(model, messages, { maxTokens })
+        : buildOpenAiRequestBody(model, messages, {
+            temperature,
+            maxTokens,
+            jsonMode,
+            providerId,
+            apiKey,
+            isGemini,
+            deepThinking,
+        })
 
     let result
     let lastErr
@@ -1068,7 +1388,7 @@ export async function callLlm(config, messages, options = {}) {
         if (signal?.aborted) throw new DOMException('操作已取消', 'AbortError')
 
         const invokePromise = invoke('llm_request', {
-            req: { url, apiKey, body: JSON.stringify(reqBody), isGemini, clientId: clientId || '' },
+            req: { url, apiKey, body: JSON.stringify(reqBody), isGemini, isAnthropic, clientId: clientId || '' },
         })
 
         try {
@@ -1084,7 +1404,7 @@ export async function callLlm(config, messages, options = {}) {
             if (e?.name === 'AbortError') throw e
             lastErr = e
             if (attempt < MAX_RETRIES) {
-                await sleep(RETRY_BACKOFF_MS[attempt])
+                await sleep(RETRY_BACKOFF_MS[attempt], signal)
                 continue
             }
             throw new Error(`LLM 调用失败（重试 ${MAX_RETRIES} 次后仍失败）: ${e?.message || e}`)
@@ -1098,10 +1418,10 @@ export async function callLlm(config, messages, options = {}) {
         }
         // 可重试的错误
         if (RETRY_STATUS.has(result.status) && attempt < MAX_RETRIES) {
-            await sleep(RETRY_BACKOFF_MS[attempt])
+            await sleep(RETRY_BACKOFF_MS[attempt], signal)
             continue
         }
-        throw new Error(result.error || `LLM API 错误 (${result.status})`)
+        throw new Error(parseHttpErrorMessage(result) || `LLM API 错误 (${result.status})`)
     }
 
     if (!result.body || result.body.trim() === '') {
@@ -1110,25 +1430,36 @@ export async function callLlm(config, messages, options = {}) {
 
     let data
     try {
-        data = JSON.parse(result.body)
+        data = parseJsonBody(result.body, 'LLM 响应')
     } catch (e) {
         console.error('LLM 响应解析失败, body:', result.body.substring(0, 500))
-        throw new Error(`LLM 返回了无效 JSON: ${result.body.substring(0, 200)}`)
+        throw new Error(`LLM 返回了无效 JSON: ${e.message || e}`)
     }
 
-    if (!data.choices || data.choices.length === 0) {
-        throw new Error('LLM 返回空结果')
-    }
+    let content
+    let thinking = null
+    if (isAnthropic) {
+        const parsed = getAnthropicTextAndThinking(data)
+        content = parsed.content
+        thinking = parsed.thinking
+    } else {
+        if (!data.choices || data.choices.length === 0) {
+            throw new Error('LLM 返回空结果')
+        }
 
-    const msg = data.choices[0].message || {}
-    let content = msg.content
-        || msg.reasoning_content
-        || msg.text
-        || null
+        const msg = data.choices[0].message || {}
+        content = msg.content
+            || msg.reasoning_content
+            || msg.text
+            || null
+        thinking = msg.reasoning_content || msg.thinking || null
+    }
 
     if (!content) {
         console.warn('LLM content 为空, 完整响应:', result.body.substring(0, 500))
-        throw new Error('LLM 返回了空内容，该模型可能不完全兼容 OpenAI Chat API。建议换用 gemini-2.5-flash')
+        throw new Error(isAnthropic
+            ? 'LLM 返回了空内容，该模型可能不完全兼容 Anthropic Messages API。'
+            : 'LLM 返回了空内容，该模型可能不完全兼容 OpenAI Chat API。建议换用 gemini-2.5-flash')
     }
 
     if (typeof content === 'string' && content.trimStart().startsWith('{')) {
@@ -1163,6 +1494,7 @@ export async function callLlm(config, messages, options = {}) {
     if (returnMeta) {
         return {
             content,
+            thinking,
             usage: { promptTokens, completionTokens, totalTokens },
             model: data.model || model,
         }
@@ -1170,8 +1502,23 @@ export async function callLlm(config, messages, options = {}) {
     return content
 }
 
-function sleep(ms) {
-    return new Promise(r => setTimeout(r, ms))
+function sleep(ms, signal) {
+    if (signal?.aborted) return Promise.reject(new DOMException('操作已取消', 'AbortError'))
+    return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+            cleanup()
+            resolve()
+        }, ms)
+        const onAbort = () => {
+            clearTimeout(timer)
+            cleanup()
+            reject(new DOMException('操作已取消', 'AbortError'))
+        }
+        const cleanup = () => {
+            if (signal) signal.removeEventListener('abort', onAbort)
+        }
+        if (signal) signal.addEventListener('abort', onAbort, { once: true })
+    })
 }
 
 /**
@@ -1725,6 +2072,7 @@ export function createAiController() {
             if (_resolveResume) { _resolveResume(); _resolveResume = null }
         },
         cancel() {
+            if (this.cancelled) return
             this.cancelled = true
             ac.abort()
             if (_resolveResume) { _resolveResume(); _resolveResume = null }
@@ -1796,10 +2144,13 @@ export async function fillApiDocPlaceholders(config, parseResult, onLog = () => 
             onLog(`[失败] [${bIdx + 1}/${batches.length}] ${batch.name} 失败: ${e.message}`, 'error')
         }
     }
-    onLog(`[完成] 描述填充完成: ${totalFilled}/${allPlaceholders.length} 个字段`, 'info')
-
     // ===== 第二阶段：AI 填充示例值 =====
-    if (controller?.cancelled) return { filled: totalFilled, total: allPlaceholders.length }
+    if (controller?.cancelled) {
+        onLog(`[取消] 描述填充已停止: ${totalFilled}/${allPlaceholders.length} 个字段`, 'warn')
+        return { filled: totalFilled, total: allPlaceholders.length, cancelled: true }
+    }
+
+    onLog(`[完成] 描述填充完成: ${totalFilled}/${allPlaceholders.length} 个字段`, 'info')
 
     const exampleItems = collectApiExampleItems(parseResult)
     if (exampleItems.length > 0) {
@@ -1828,8 +2179,12 @@ export async function fillApiDocPlaceholders(config, parseResult, onLog = () => 
         }
     }
 
-    onLog(`[完成] AI 填充全部完成`, 'info')
-    return { filled: totalFilled, total: allPlaceholders.length }
+    if (controller?.cancelled) {
+        onLog(`[取消] AI 填充已停止`, 'warn')
+    } else {
+        onLog(`[完成] AI 填充全部完成`, 'info')
+    }
+    return { filled: totalFilled, total: allPlaceholders.length, cancelled: !!controller?.cancelled }
 }
 
 /**
@@ -1867,7 +2222,11 @@ export async function fillDbDocPlaceholders(config, schema, getTableComment, get
             onLog(`[失败] [${bIdx + 1}/${batches.length}] ${batch.name} 失败: ${e.message}`, 'error')
         }
     }
-    onLog(`🎉 完成: ${totalFilled}/${allPlaceholders.length} 个注释已填充`, 'info')
-    return { filled: totalFilled, total: allPlaceholders.length, newOverrides: currentOverrides }
+    if (controller?.cancelled) {
+        onLog(`[取消] AI 填充已停止: ${totalFilled}/${allPlaceholders.length} 个注释已填充`, 'warn')
+    } else {
+        onLog(`🎉 完成: ${totalFilled}/${allPlaceholders.length} 个注释已填充`, 'info')
+    }
+    return { filled: totalFilled, total: allPlaceholders.length, newOverrides: currentOverrides, cancelled: !!controller?.cancelled }
 }
 

@@ -282,11 +282,16 @@ export async function fillDocSections(config, sections, contextSummary, docInfo 
         }
     }
 
+    const cancelled = !!controller?.cancelled
     const summary = [`已完成 ${generated}/${sections.length}`]
     if (skipped > 0) summary.push(`跳过 ${skipped}（已有内容）`)
     if (failed > 0) summary.push(`失败 ${failed}`)
-    onLog(`[完成] 文档生成完成: ${summary.join('，')}`, 'info')
-    return { generated, skipped, failed, total: sections.length }
+    if (cancelled) {
+        onLog(`[取消] 文档生成已停止: ${summary.join('，')}`, 'warn')
+    } else {
+        onLog(`[完成] 文档生成完成: ${summary.join('，')}`, 'info')
+    }
+    return { generated, skipped, failed, total: sections.length, cancelled }
 }
 
 function sectionHasContent(section) {

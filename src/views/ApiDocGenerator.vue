@@ -27,7 +27,7 @@
             </span>
             <button v-if="!aiController?.paused" class="btn btn-secondary btn-sm" @click="aiController?.pause()" title="暂停">⏸ 暂停</button>
             <button v-else class="btn btn-primary btn-sm" @click="aiController?.resume()" title="继续">▶ 继续</button>
-            <button class="btn btn-danger btn-sm" @click="aiController?.cancel()" title="取消">✕ 取消</button>
+            <button class="btn btn-danger btn-sm" @click="cancelAi" title="取消">✕ 取消</button>
           </template>
           <select class="ai-model-select" v-model="selectedProviderId" :disabled="aiProcessing" @change="onProviderSelect">
             <option v-for="p in globalStore.providerConfigs" :key="p.id" :value="p.id">{{ p.label }}</option>
@@ -846,9 +846,10 @@ export default {
         return
       }
 
+      const controller = createAiController()
       this.aiProcessing = true
       window.dispatchEvent(new Event('ai-fill-start'))
-      this.aiController = createAiController()
+      this.aiController = controller
       const modelLabel = provider.models.find(m => m.id === config.model)?.label || config.model
       this.aiProgressText = `使用 ${provider.label} / ${modelLabel}...`
       this.addAiLog(`开始 AI 补充，使用 ${provider.label} / ${modelLabel}`, 'info')
@@ -864,23 +865,37 @@ export default {
           (batchName, filled, batchTotal) => {
             this.parseResult = { ...this.parseResult }
           },
-          this.aiController,
+          controller,
         )
 
-        if (result.total === 0) {
+        if (result.cancelled || controller.cancelled) {
+          this.showToast('已停止 AI 补充', 'info')
+        } else if (result.total === 0) {
           this.showToast('没有需要补充的占位符', 'info')
         } else {
           this.showToast(`AI 补充完成: ${result.filled}/${result.total} 个字段已填充`, 'success')
           this.parseResult = { ...this.parseResult }
         }
       } catch (e) {
-        this.showToast('AI 补充失败: ' + String(e), 'error')
-        this.addAiLog(`失败: ${e.message}`, 'error')
+        if (e?.name === 'AbortError' || controller.cancelled) {
+          this.showToast('已停止 AI 补充', 'info')
+        } else {
+          this.showToast('AI 补充失败: ' + String(e), 'error')
+          this.addAiLog(`失败: ${e.message}`, 'error')
+        }
+      } finally {
+        if (this.aiController === controller) {
+          this.aiProcessing = false
+          this.aiProgressText = ''
+          this.aiController = null
+        }
       }
-
+    },
+    cancelAi() {
+      if (!this.aiController) return
+      this.aiController.cancel()
       this.aiProcessing = false
-      this.aiProgressText = ''
-      this.aiController = null
+      this.aiProgressText = '已停止'
     },
     syncSelectionFromStore() {
       if (this.globalStore.providerConfigs.length > 0 && !this.selectedProviderId) {

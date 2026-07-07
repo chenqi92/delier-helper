@@ -7,137 +7,6 @@
       </div>
     </div>
 
-    <div class="cloud-account-wrap">
-      <div class="card">
-        <div class="card-header">
-          <h3><Cloud :size="14" /> 云端账号</h3>
-          <span v-if="cloudAccount?.user" class="ai-saved-badge"><Check :size="12" /> 已登录</span>
-        </div>
-        <div class="card-body cloud-account-body">
-          <div class="cloud-url-row">
-            <input
-              type="text"
-              class="form-input"
-              v-model="cloudServiceUrl"
-              placeholder="https://你的云端服务域名"
-              :disabled="!!cloudAccount?.user || cloudLoggingIn || cloudPasswordBusy || cloudEmailBusy || cloudEmailSending"
-            />
-            <button v-if="!cloudAccount?.user" class="btn btn-secondary btn-sm" @click="startCloudLogin" :disabled="cloudLoggingIn || cloudPasswordBusy || cloudEmailBusy || cloudEmailSending || !cloudServiceUrl">
-              <LogIn :size="14" /> {{ cloudLoggingIn ? '等待扫码...' : '微信扫码' }}
-            </button>
-            <button v-else class="btn btn-secondary btn-sm" @click="syncCloudModels" :disabled="cloudSyncing">
-              <RefreshCw :size="14" /> {{ cloudSyncing ? '刷新中...' : '刷新模型' }}
-            </button>
-            <button v-if="cloudAccount?.user" class="btn btn-secondary btn-sm" @click="doCloudCheckin" :disabled="cloudCheckingIn">
-              <Gift :size="14" /> {{ cloudCheckingIn ? '签到中...' : '签到' }}
-            </button>
-            <button v-if="cloudAccount?.user" class="btn btn-secondary btn-sm" @click="doCloudLogout">
-              <LogOut :size="14" /> 退出
-            </button>
-          </div>
-          <div v-if="!cloudAccount?.user" class="cloud-auth-panel">
-            <div class="cloud-auth-tabs">
-              <button :class="{ active: cloudAuthMode === 'login' }" @click="cloudAuthMode = 'login'">账号登录</button>
-              <button :class="{ active: cloudAuthMode === 'email' }" @click="cloudAuthMode = 'email'">邮箱验证码</button>
-              <button :class="{ active: cloudAuthMode === 'register' }" @click="cloudAuthMode = 'register'">注册账号</button>
-            </div>
-            <div v-if="cloudAuthMode !== 'email'" class="cloud-auth-grid">
-              <input
-                type="text"
-                class="form-input"
-                v-model.trim="cloudLoginAccount"
-                placeholder="账号 / 邮箱"
-                autocomplete="username"
-                @keyup.enter="doPasswordCloudAuth"
-              />
-              <input
-                type="password"
-                class="form-input"
-                v-model="cloudLoginPassword"
-                placeholder="密码，至少 8 位"
-                :autocomplete="cloudAuthMode === 'register' ? 'new-password' : 'current-password'"
-                @keyup.enter="doPasswordCloudAuth"
-              />
-              <input
-                v-if="cloudAuthMode === 'register'"
-                type="text"
-                class="form-input"
-                v-model.trim="cloudRegisterNickname"
-                placeholder="昵称，可选"
-                autocomplete="nickname"
-                @keyup.enter="doPasswordCloudAuth"
-              />
-              <input
-                v-if="cloudAuthMode === 'register'"
-                type="password"
-                class="form-input"
-                v-model="cloudPasswordConfirm"
-                placeholder="确认密码"
-                autocomplete="new-password"
-                @keyup.enter="doPasswordCloudAuth"
-              />
-              <button class="btn btn-primary btn-sm cloud-auth-submit" @click="doPasswordCloudAuth" :disabled="cloudPasswordBusy || !passwordAuthValid">
-                <UserPlus v-if="cloudAuthMode === 'register'" :size="14" />
-                <LogIn v-else :size="14" />
-                {{ cloudPasswordBusy ? '处理中...' : (cloudAuthMode === 'register' ? '注册并登录' : '登录') }}
-              </button>
-            </div>
-            <div v-else class="cloud-auth-grid cloud-email-grid">
-              <input
-                type="email"
-                class="form-input"
-                v-model.trim="cloudEmail"
-                placeholder="邮箱地址"
-                autocomplete="email"
-                @keyup.enter="doEmailCloudLogin"
-              />
-              <div class="cloud-code-input-wrap">
-                <input
-                  type="text"
-                  class="form-input"
-                  v-model.trim="cloudEmailCode"
-                  placeholder="6 位验证码"
-                  inputmode="numeric"
-                  maxlength="6"
-                  autocomplete="one-time-code"
-                  @keyup.enter="doEmailCloudLogin"
-                />
-                <button class="btn btn-secondary btn-sm" @click="sendEmailCode" :disabled="cloudEmailSending || cloudEmailCooldown > 0 || !emailInputValid">
-                  {{ cloudEmailCooldown > 0 ? `${cloudEmailCooldown}s` : (cloudEmailSending ? '发送中...' : '发送验证码') }}
-                </button>
-              </div>
-              <button class="btn btn-primary btn-sm cloud-auth-submit" @click="doEmailCloudLogin" :disabled="cloudEmailBusy || !emailAuthValid">
-                <LogIn :size="14" /> {{ cloudEmailBusy ? '登录中...' : '邮箱登录' }}
-              </button>
-            </div>
-          </div>
-          <div v-if="cloudAccount?.user" class="cloud-user-line">
-            <span>{{ cloudAccount.user.nickname || '云端用户' }}</span>
-            <span>等级：{{ cloudAccount.user.level || '-' }}</span>
-            <span>额度：{{ formatCredits(cloudAccount.user.creditBalance) }}</span>
-            <span v-if="cloudAccount.expiresAt">Access Token {{ formatExpire(cloudAccount.expiresAt) }} 过期</span>
-          </div>
-          <div v-if="cloudStatus" class="cloud-status-line" :class="cloudStatusType">{{ cloudStatus }}</div>
-        </div>
-      </div>
-    </div>
-
-    <div v-if="cloudLoginSession" class="ai-modal-mask" @click.self="cancelCloudLogin">
-      <div class="ai-modal cloud-login-modal">
-        <div class="ai-modal-header">
-          <span>微信扫码登录</span>
-          <button class="ai-cfg-act-btn" @click="cancelCloudLogin"><X :size="14" /></button>
-        </div>
-        <div class="ai-modal-body cloud-login-body">
-          <img v-if="cloudQrDataUrl" :src="cloudQrDataUrl" class="cloud-login-qr" alt="微信登录二维码" />
-          <div class="cloud-login-text">{{ cloudStatus || '请使用微信扫码确认登录' }}</div>
-          <button class="btn btn-secondary btn-sm" @click="openCloudLoginUrl">
-            <ExternalLink :size="14" /> 打开登录页
-          </button>
-        </div>
-      </div>
-    </div>
-
     <!-- 主体 -->
     <div class="app-body">
       <!-- 左侧：已保存的厂商列表 -->
@@ -470,30 +339,18 @@
 <script>
 import {
   Bot, Settings, Check, Eye, EyeOff, Wifi, Save,
-  Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical,
-  Cloud, LogIn, LogOut, Gift, ExternalLink, RefreshCw, UserPlus
+  Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical
 } from 'lucide-vue-next'
-import { openUrl } from '@tauri-apps/plugin-opener'
-import QRCode from 'qrcode'
 import {
-  LLM_PROVIDERS, loadProviderConfigs, upsertProviderConfig,
+  LLM_PROVIDERS, upsertProviderConfig,
   deleteProviderConfig, testLlmConnection, getDefaultModels,
-  getResolvedConfig, nextId, detectModels,
-  checkinCloudAccount, createCloudLoginSession, loadCloudAccount,
-  loginCloudEmailCode,
-  loginCloudAccount,
-  logoutCloudAccount, normalizeCloudServiceUrl, pollCloudLoginSession,
-  registerCloudAccount,
-  sendCloudEmailCode,
-  syncCloudProvider
+  getResolvedConfig, nextId, detectModels
 } from '../core/llm/llm-service.js'
 import { refreshProviderConfigs } from '../core/global-store.js'
 
-const DEFAULT_CLOUD_SERVICE_URL = 'https://soft.yzs.ai'
-
 export default {
   name: 'AiSettings',
-  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical, Cloud, LogIn, LogOut, Gift, ExternalLink, RefreshCw, UserPlus },
+  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical },
   inject: ['showToast', 'globalStore'],
   data() {
     return {
@@ -515,28 +372,6 @@ export default {
       providerDragOver: -1,
       modelDragIdx: -1,
       modelDragOver: -1,
-      cloudServiceUrl: DEFAULT_CLOUD_SERVICE_URL,
-      cloudAccount: null,
-      cloudLoginSession: null,
-      cloudQrDataUrl: '',
-      cloudLoggingIn: false,
-      cloudSyncing: false,
-      cloudCheckingIn: false,
-      cloudStatus: '',
-      cloudStatusType: 'info',
-      cloudPollTimer: null,
-      cloudAuthMode: 'login',
-      cloudLoginAccount: '',
-      cloudLoginPassword: '',
-      cloudRegisterNickname: '',
-      cloudPasswordConfirm: '',
-      cloudPasswordBusy: false,
-      cloudEmail: '',
-      cloudEmailCode: '',
-      cloudEmailSending: false,
-      cloudEmailBusy: false,
-      cloudEmailCooldown: 0,
-      cloudEmailCooldownTimer: null,
     }
   },
   computed: {
@@ -562,279 +397,11 @@ export default {
       const preset = this.providerPresets.find(p => p.id === this.form.providerId)
       return preset?.apiKeyPlaceholder || 'sk-...'
     },
-    passwordAuthValid() {
-      const account = (this.cloudLoginAccount || '').trim()
-      const password = this.cloudLoginPassword || ''
-      if (!this.cloudServiceUrl || account.length < 3 || password.length < 8) return false
-      if (this.cloudAuthMode === 'register' && password !== this.cloudPasswordConfirm) return false
-      return true
-    },
-    emailInputValid() {
-      return !!this.cloudServiceUrl && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((this.cloudEmail || '').trim())
-    },
-    emailAuthValid() {
-      return this.emailInputValid && /^\d{6}$/.test((this.cloudEmailCode || '').trim())
-    },
   },
   async mounted() {
-    await this.loadCloudAccountState()
     await this.loadData()
   },
-  beforeUnmount() {
-    this.stopCloudPolling()
-    this.stopEmailCooldown()
-  },
   methods: {
-    async loadCloudAccountState() {
-      this.cloudAccount = await loadCloudAccount()
-      this.cloudServiceUrl = this.cloudAccount?.serviceUrl || DEFAULT_CLOUD_SERVICE_URL
-    },
-
-    async doPasswordCloudAuth() {
-      if (!this.passwordAuthValid || this.cloudPasswordBusy) return
-      const base = normalizeCloudServiceUrl(this.cloudServiceUrl)
-      if (!base) return
-      this.cloudServiceUrl = base
-      this.cloudPasswordBusy = true
-      this.cloudStatusType = 'info'
-      this.cloudStatus = this.cloudAuthMode === 'register' ? '正在注册云端账号...' : '正在登录云端账号...'
-      try {
-        const result = this.cloudAuthMode === 'register'
-          ? await registerCloudAccount(base, this.cloudLoginAccount, this.cloudLoginPassword, this.cloudRegisterNickname)
-          : await loginCloudAccount(base, this.cloudLoginAccount, this.cloudLoginPassword)
-        this.cloudAccount = result.account
-        this.cloudLoginPassword = ''
-        this.cloudPasswordConfirm = ''
-        this.cloudStatusType = 'success'
-        this.cloudStatus = '登录成功，正在同步可用模型...'
-        await this.syncCloudModels()
-        this.showToast(this.cloudAuthMode === 'register' ? '云端账号已注册并登录' : '云端账号已登录', 'success')
-      } catch (e) {
-        this.cloudStatusType = 'error'
-        const msg = e.message || String(e)
-        if (/Account already exists|account_exists/.test(msg)) {
-          this.cloudStatus = '账号已存在，请切换到账号登录'
-        } else if (/Invalid account or password|invalid_login/.test(msg)) {
-          this.cloudStatus = '账号或密码错误'
-        } else if (/Too many failed|temporarily_locked|429/.test(msg)) {
-          this.cloudStatus = '登录失败次数过多，请稍后再试'
-        } else {
-          this.cloudStatus = `${this.cloudAuthMode === 'register' ? '注册' : '登录'}失败：${msg}`
-        }
-      } finally {
-        this.cloudPasswordBusy = false
-      }
-    },
-
-    async sendEmailCode() {
-      if (!this.emailInputValid || this.cloudEmailSending) return
-      const base = normalizeCloudServiceUrl(this.cloudServiceUrl)
-      if (!base) return
-      this.cloudServiceUrl = base
-      this.cloudEmailSending = true
-      this.cloudStatusType = 'info'
-      this.cloudStatus = '正在发送邮箱验证码...'
-      try {
-        const result = await sendCloudEmailCode(base, this.cloudEmail)
-        if (result.debugCode) this.cloudEmailCode = result.debugCode
-        this.cloudStatusType = 'success'
-        this.cloudStatus = '验证码已发送，请查收邮箱'
-        this.startEmailCooldown(60)
-      } catch (e) {
-        this.cloudStatusType = 'error'
-        const msg = e.message || String(e)
-        if (/rate_limited|Too many|429/.test(msg)) {
-          this.cloudStatus = '验证码发送太频繁，请稍后再试'
-        } else {
-          this.cloudStatus = `验证码发送失败：${msg}`
-        }
-      } finally {
-        this.cloudEmailSending = false
-      }
-    },
-
-    async doEmailCloudLogin() {
-      if (!this.emailAuthValid || this.cloudEmailBusy) return
-      const base = normalizeCloudServiceUrl(this.cloudServiceUrl)
-      if (!base) return
-      this.cloudServiceUrl = base
-      this.cloudEmailBusy = true
-      this.cloudStatusType = 'info'
-      this.cloudStatus = '正在验证邮箱验证码...'
-      try {
-        const result = await loginCloudEmailCode(base, this.cloudEmail, this.cloudEmailCode)
-        this.cloudAccount = result.account
-        this.cloudEmailCode = ''
-        this.cloudStatusType = 'success'
-        this.cloudStatus = '登录成功，正在同步可用模型...'
-        await this.syncCloudModels()
-        this.showToast('云端账号已登录', 'success')
-      } catch (e) {
-        this.cloudStatusType = 'error'
-        const msg = e.message || String(e)
-        if (/Invalid or expired|invalid_email_code/.test(msg)) {
-          this.cloudStatus = '验证码错误或已过期'
-        } else if (/Too many verification|too_many_code_attempts|429/.test(msg)) {
-          this.cloudStatus = '验证码尝试次数过多，请重新发送'
-        } else {
-          this.cloudStatus = `邮箱登录失败：${msg}`
-        }
-      } finally {
-        this.cloudEmailBusy = false
-      }
-    },
-
-    startEmailCooldown(seconds) {
-      this.stopEmailCooldown()
-      this.cloudEmailCooldown = seconds
-      this.cloudEmailCooldownTimer = setInterval(() => {
-        this.cloudEmailCooldown = Math.max(0, this.cloudEmailCooldown - 1)
-        if (this.cloudEmailCooldown <= 0) this.stopEmailCooldown()
-      }, 1000)
-    },
-
-    stopEmailCooldown() {
-      if (this.cloudEmailCooldownTimer) {
-        clearInterval(this.cloudEmailCooldownTimer)
-        this.cloudEmailCooldownTimer = null
-      }
-      if (this.cloudEmailCooldown < 0) this.cloudEmailCooldown = 0
-    },
-
-    async startCloudLogin() {
-      const base = normalizeCloudServiceUrl(this.cloudServiceUrl)
-      if (!base) return
-      this.cloudServiceUrl = base
-      this.cloudLoggingIn = true
-      this.cloudStatus = '正在创建登录二维码...'
-      this.cloudStatusType = 'info'
-      try {
-        const session = await createCloudLoginSession(base)
-        this.cloudLoginSession = session
-        this.cloudQrDataUrl = await QRCode.toDataURL(session.loginUrl, { width: 220, margin: 1 })
-        this.cloudStatus = '请使用微信扫码确认登录'
-        this.startCloudPolling()
-      } catch (e) {
-        this.cloudLoggingIn = false
-        this.cloudStatusType = 'error'
-        this.cloudStatus = `创建登录失败：${e.message || e}`
-      }
-    },
-
-    startCloudPolling() {
-      this.stopCloudPolling()
-      this.cloudPollTimer = setInterval(() => {
-        this.pollCloudLogin().catch(e => {
-          this.cloudStatusType = 'error'
-          this.cloudStatus = `登录轮询失败：${e.message || e}`
-          this.stopCloudPolling()
-          this.cloudLoggingIn = false
-        })
-      }, 1800)
-    },
-
-    stopCloudPolling() {
-      if (this.cloudPollTimer) {
-        clearInterval(this.cloudPollTimer)
-        this.cloudPollTimer = null
-      }
-    },
-
-    async pollCloudLogin() {
-      const s = this.cloudLoginSession
-      if (!s) return
-      const result = await pollCloudLoginSession(this.cloudServiceUrl, s.id, s.pollToken)
-      if (result.status === 'pending') return
-      if (result.status === 'expired' || result.status === 'consumed') {
-        this.cloudStatusType = 'error'
-        this.cloudStatus = result.status === 'expired' ? '二维码已过期，请重新登录' : '该登录二维码已使用'
-        this.stopCloudPolling()
-        this.cloudLoggingIn = false
-        return
-      }
-      if (result.status === 'authenticated') {
-        this.stopCloudPolling()
-        this.cloudLoggingIn = false
-        this.cloudLoginSession = null
-        this.cloudQrDataUrl = ''
-        this.cloudAccount = result.account
-        this.cloudStatusType = 'success'
-        this.cloudStatus = '登录成功，正在同步可用模型...'
-        await this.syncCloudModels()
-        this.showToast('云端账号已登录', 'success')
-      }
-    },
-
-    async openCloudLoginUrl() {
-      if (this.cloudLoginSession?.loginUrl) {
-        await openUrl(this.cloudLoginSession.loginUrl)
-      }
-    },
-
-    cancelCloudLogin() {
-      this.stopCloudPolling()
-      this.cloudLoginSession = null
-      this.cloudQrDataUrl = ''
-      this.cloudLoggingIn = false
-      this.cloudStatus = ''
-    },
-
-    async syncCloudModels() {
-      this.cloudSyncing = true
-      this.cloudStatusType = 'info'
-      this.cloudStatus = '正在同步云端模型...'
-      try {
-        const provider = await syncCloudProvider(this.cloudServiceUrl)
-        await refreshProviderConfigs()
-        this.cloudAccount = await loadCloudAccount()
-        if (provider) this.selectProvider(provider)
-        this.cloudStatusType = 'success'
-        this.cloudStatus = `已同步 ${provider.models.length} 个模型`
-      } catch (e) {
-        this.cloudStatusType = 'error'
-        this.cloudStatus = `同步失败：${e.message || e}`
-      } finally {
-        this.cloudSyncing = false
-      }
-    },
-
-    async doCloudCheckin() {
-      this.cloudCheckingIn = true
-      try {
-        const result = await checkinCloudAccount()
-        this.cloudAccount = await loadCloudAccount()
-        this.cloudStatusType = 'success'
-        this.cloudStatus = `签到成功，获得 ${this.formatCredits(result.amount)} 额度`
-      } catch (e) {
-        this.cloudStatusType = 'error'
-        this.cloudStatus = e.message?.includes('Already') ? '今天已经签到过了' : `签到失败：${e.message || e}`
-      } finally {
-        this.cloudCheckingIn = false
-      }
-    },
-
-    async doCloudLogout() {
-      await logoutCloudAccount()
-      await refreshProviderConfigs()
-      this.cloudAccount = null
-      this.cloudStatusType = 'info'
-      this.cloudStatus = '已退出云端账号'
-    },
-
-    formatCredits(n) {
-      if (n == null) return '-'
-      if (n >= 1000000) return `${(n / 1000000).toFixed(2)}M`
-      if (n >= 1000) return `${(n / 1000).toFixed(1)}K`
-      return String(n)
-    },
-
-    formatExpire(sec) {
-      const left = sec - Math.floor(Date.now() / 1000)
-      if (left <= 0) return '已'
-      if (left < 3600) return `${Math.ceil(left / 60)} 分钟后`
-      return `${Math.ceil(left / 3600)} 小时后`
-    },
-
     async loadData() {
       await refreshProviderConfigs()
       if (this.globalStore.providerConfigs.length > 0) {
@@ -985,6 +552,9 @@ export default {
         const result = await detectModels(this.form)
         this.detectResult = result
         if (result.success && result.models.length > 0) {
+          if (result.baseUrl && result.baseUrl !== this.form.baseUrl) {
+            this.form.baseUrl = result.baseUrl
+          }
           this.form.models = result.models
           this.form.activeModelId = result.models[0].id
         }
@@ -1102,122 +672,6 @@ export default {
   gap: 12px;
   color: var(--text-muted);
   font-size: 13px;
-}
-
-.cloud-account-wrap {
-  padding: 0 12px 10px;
-  flex-shrink: 0;
-}
-.cloud-account-body {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.cloud-url-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.cloud-url-row .form-input {
-  flex: 1;
-  min-width: 260px;
-}
-.cloud-user-line {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.cloud-auth-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 2px;
-}
-.cloud-auth-tabs {
-  display: inline-flex;
-  width: fit-content;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
-  background: var(--bg-secondary);
-}
-.cloud-auth-tabs button {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  padding: 5px 12px;
-  font-size: 12px;
-  cursor: pointer;
-}
-.cloud-auth-tabs button.active {
-  background: var(--primary-500);
-  color: #fff;
-}
-.cloud-auth-grid {
-  display: grid;
-  grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) auto;
-  gap: 8px;
-  align-items: center;
-}
-.cloud-auth-submit {
-  min-width: 110px;
-}
-.cloud-code-input-wrap {
-  display: flex;
-  gap: 8px;
-  min-width: 0;
-}
-.cloud-code-input-wrap .form-input {
-  min-width: 120px;
-}
-.cloud-code-input-wrap .btn {
-  min-width: 96px;
-  white-space: nowrap;
-}
-.cloud-status-line {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-.cloud-status-line.success {
-  color: var(--success-500);
-}
-.cloud-status-line.error {
-  color: var(--danger-500);
-}
-.cloud-login-modal {
-  width: 320px;
-}
-.cloud-login-body {
-  align-items: center;
-  text-align: center;
-}
-.cloud-login-qr {
-  width: 220px;
-  height: 220px;
-  border-radius: 4px;
-  background: #fff;
-  padding: 8px;
-}
-.cloud-login-text {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-@media (max-width: 760px) {
-  .cloud-auth-grid {
-    grid-template-columns: 1fr;
-  }
-  .cloud-auth-submit {
-    width: 100%;
-  }
-  .cloud-code-input-wrap {
-    flex-direction: column;
-  }
-  .cloud-code-input-wrap .btn {
-    width: 100%;
-  }
 }
 
 /* 新增按钮 */

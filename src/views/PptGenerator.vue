@@ -613,8 +613,9 @@ export default {
       const llmConfig = this.resolveLlm()
       if (!llmConfig) return
 
+      const controller = createAiController()
       this.aiProcessing = true
-      this.aiController = createAiController()
+      this.aiController = controller
       window.dispatchEvent(new Event('ai-fill-start'))
       const scanContext = this.buildContext()
       const tpl = this.selectedTemplate
@@ -625,7 +626,7 @@ export default {
         let genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || this.businessBrief?.styleId || 'auto' }
 
         if (this.scanResult) {
-          await this.ensureBusinessContext(llmConfig, scanContext, genCfg, { signal: this.aiController.signal })
+          await this.ensureBusinessContext(llmConfig, scanContext, genCfg, { signal: controller.signal })
           genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || this.businessBrief?.styleId || 'auto' }
         }
         const contextSummary = this.buildPptContext(scanContext, genCfg) || scanContext
@@ -641,10 +642,10 @@ export default {
           }
           this.cfg.pageCount = outline.slides.length
         } else {
-          outline = await generateOutline(llmConfig, contextSummary, genCfg, this.lastStyleId, { signal: this.aiController.signal })
+          outline = await generateOutline(llmConfig, contextSummary, genCfg, this.lastStyleId, { signal: controller.signal })
           outline.styleId = this.resolveStyleId(outline.styleId)
         }
-        if (this.aiController.cancelled) throw new Error('已取消')
+        if (controller.cancelled) throw new Error('已取消')
 
         this.lastStyleId = outline.styleId
         setSetting('ppt-last-style', outline.styleId).catch(() => {})
@@ -664,14 +665,14 @@ export default {
         const prevTitles = []
         const imgPtr = { v: 0 }
         for (let i = 0; i < outline.slides.length; i++) {
-          if (this.aiController.cancelled) break
-          if (this.aiController.paused) { await this.aiController.waitIfPaused(); if (this.aiController.cancelled) break }
+          if (controller.cancelled) break
+          if (controller.paused) { await controller.waitIfPaused(); if (controller.cancelled) break }
           const o = outline.slides[i]
           const slideId = this.deck.slides[i].id
           this.aiProgressText = `[${i + 1}/${outline.slides.length}] ${o.title || o.layout}`
           this.currentSlideIndex = i
           try {
-            const content = await generateSlideContent(llmConfig, o, contextSummary, genCfg, prevTitles.slice(-12), { signal: this.aiController.signal })
+            const content = await generateSlideContent(llmConfig, o, contextSummary, genCfg, prevTitles.slice(-12), { signal: controller.signal })
             prevTitles.push(content.title || o.title || '')
             this.applyCoverFootnote(o.layout, content)
             this.assignImages(o.layout, content, imgSrcs, imgPtr)
@@ -690,13 +691,18 @@ export default {
             this.addLog(`[失败] 第 ${i + 1} 页：${e.message}`, 'error')
           }
         }
-        if (!this.aiController.cancelled) this.showToast('PPT 生成完成！可直接在右侧编辑', 'success')
+        if (controller.cancelled) this.showToast('已停止生成', 'info')
+        else this.showToast('PPT 生成完成！可直接在右侧编辑', 'success')
       } catch (e) {
-        if (e.name !== 'AbortError' && e.message !== '已取消') this.showToast('生成失败: ' + String(e.message || e), 'error')
+        if (e.name === 'AbortError' || e.message === '已取消' || controller.cancelled) this.showToast('已停止生成', 'info')
+        else this.showToast('生成失败: ' + String(e.message || e), 'error')
+      } finally {
+        if (this.aiController === controller) {
+          this.aiProcessing = false
+          this.aiProgressText = ''
+          this.aiController = null
+        }
       }
-      this.aiProcessing = false
-      this.aiProgressText = ''
-      this.aiController = null
     },
     applyCoverFootnote(layout, content) {
       if ((layout === 'cover' || layout === 'closing') && !content.footnote && this.cfg.footnote) content.footnote = this.cfg.footnote
@@ -708,15 +714,16 @@ export default {
       if (!llmConfig) return
       const i = this.currentSlideIndex
       const s = this.currentSlide
+      const controller = createAiController()
       this.aiProcessing = true
-      this.aiController = createAiController()
+      this.aiController = controller
       this.aiProgressText = `重生成第 ${i + 1} 页…`
       s.pending = true
       try {
         const o = { layout: s.layout, title: s.title, intent: s.intent || '' }
         const scanContext = this.buildContext()
         const pptContext = this.buildPptContext(scanContext, { ...this.cfg })
-        const content = await generateSlideContent(llmConfig, o, pptContext || scanContext, { ...this.cfg }, [], { signal: this.aiController.signal })
+        const content = await generateSlideContent(llmConfig, o, pptContext || scanContext, { ...this.cfg }, [], { signal: controller.signal })
         this.applyCoverFootnote(s.layout, content)
         // 保留本页原有配图；若原本没有则按需补一张
         if (s.content) {
@@ -735,15 +742,25 @@ export default {
           this.showToast('本页已重生成', 'success')
         }
       } catch (e) {
-        if (this.currentSlide) this.currentSlide.pending = false
-        if (e.name !== 'AbortError') this.showToast('重生成失败: ' + String(e.message || e), 'error')
+        if (e.name === 'AbortError' || controller.cancelled) this.showToast('已停止生成', 'info')
+        else this.showToast('重生成失败: ' + String(e.message || e), 'error')
+      } finally {
+        const current = this.deck?.slides.find(x => x.id === s.id)
+        if (current) current.pending = false
+        if (this.aiController === controller) {
+          this.aiProcessing = false
+          this.aiProgressText = ''
+          this.aiController = null
+        }
       }
-      this.aiProcessing = false
-      this.aiProgressText = ''
-      this.aiController = null
     },
     toggleAiPause() { if (this.aiController) this.aiController.paused ? this.aiController.resume() : this.aiController.pause() },
-    cancelAi() { if (this.aiController) this.aiController.cancel() },
+    cancelAi() {
+      if (!this.aiController) return
+      this.aiController.cancel()
+      this.aiProcessing = false
+      this.aiProgressText = '已停止'
+    },
 
     // ===== 幻灯片操作 =====
     selectSlide(i) { this.currentSlideIndex = i; this.selectedElId = null },

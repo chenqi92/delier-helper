@@ -199,6 +199,7 @@ pub struct LlmRequest {
     pub api_key: String,
     pub body: String,
     pub is_gemini: bool,
+    pub is_anthropic: Option<bool>,
     pub client_id: Option<String>,
 }
 
@@ -240,11 +241,22 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
         req.url.clone()
     };
 
-    let mut builder = client.post(&url).header("Content-Type", "application/json");
+    let is_anthropic = req.is_anthropic.unwrap_or(false);
+
+    let mut builder = client
+        .post(&url)
+        .header("Content-Type", "application/json")
+        .header("Accept", "application/json");
 
     // apiKey 非空时才发送认证头（本地部署如 Ollama/vLLM 不需要）
     if !req.api_key.is_empty() {
-        builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+        if is_anthropic {
+            builder = builder
+                .header("x-api-key", req.api_key.clone())
+                .header("anthropic-version", "2023-06-01");
+        } else {
+            builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+        }
     }
 
     // Gemini 额外带 x-goog-api-key（Google API 另一种标准认证方式）
@@ -291,6 +303,7 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
 pub struct LlmGetRequest {
     pub url: String,
     pub api_key: String,
+    pub is_anthropic: Option<bool>,
     pub client_id: Option<String>,
 }
 
@@ -312,9 +325,16 @@ pub async fn llm_get_request(req: LlmGetRequest) -> LlmResponse {
         }
     };
 
-    let mut builder = client.get(&req.url);
+    let is_anthropic = req.is_anthropic.unwrap_or(false);
+    let mut builder = client.get(&req.url).header("Accept", "application/json");
     if !req.api_key.is_empty() {
-        builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+        if is_anthropic {
+            builder = builder
+                .header("x-api-key", req.api_key.clone())
+                .header("anthropic-version", "2023-06-01");
+        } else {
+            builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+        }
     }
     if let Some(client_id) = req.client_id.as_ref() {
         if !client_id.is_empty() {

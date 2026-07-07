@@ -153,8 +153,7 @@
 
 <script>
 import { ClipboardList, MessageCircle, Bot, Send, Brain, Trash2, ImagePlus, X, Plus, History } from 'lucide-vue-next'
-import { invoke } from '@tauri-apps/api/core'
-import { ensureCloudAccessToken, getResolvedConfig, normalizeCloudServiceUrl } from '../core/llm/llm-service.js'
+import { callLlm, getResolvedConfig } from '../core/llm/llm-service.js'
 import {
   createConversation, getConversations, getMessages,
   addMessage, updateConversationTitle, deleteConversation,
@@ -464,56 +463,18 @@ export default {
     },
 
     async callChatLlm(config, messages) {
-      let { baseUrl, apiKey, model, providerId, clientId } = config
-      if (config.cloudManaged || providerId === 'ranzhu-cloud') {
-        const account = await ensureCloudAccessToken()
-        if (account) {
-          apiKey = account.accessToken || account.token || apiKey
-          clientId = account.clientId || clientId || ''
-          if (account.serviceUrl) baseUrl = `${normalizeCloudServiceUrl(account.serviceUrl)}/v1`
-        }
-      }
-      const base = baseUrl.replace(/\/+$/, '')
-      const isGemini = providerId === 'gemini' || base.includes('generativelanguage.googleapis.com')
-
       const hasImages = messages.some(m => Array.isArray(m.content) && m.content.some(c => c.type === 'image_url'))
-
-      const reqBody = {
-        model,
-        messages,
+      const result = await callLlm(config, messages, {
         temperature: 0.7,
-        max_tokens: hasImages ? 4096 : 8192,
-        stream: false,
+        maxTokens: hasImages ? 4096 : 8192,
+        jsonMode: false,
+        returnMeta: true,
+        deepThinking: this.currentModelDeepThinking,
+      })
+      return {
+        content: result.content || '',
+        thinking: result.thinking || null,
       }
-
-      if (this.currentModelDeepThinking) {
-        if (providerId === 'openai' && (model.startsWith('o') || model.includes('/o'))) {
-          reqBody.reasoning_effort = 'high'
-        } else {
-          reqBody.enable_thinking = true
-        }
-      }
-
-      const result = await invoke('llm_request', { req: { url: `${base}/chat/completions`, apiKey, body: JSON.stringify(reqBody), isGemini, clientId: clientId || '' } })
-
-      if (!result.success) {
-        let errMsg = `API 错误 (${result.status})`
-        if (result.error) {
-          try {
-            const errBody = JSON.parse(result.error.replace(/^HTTP \d+: /, ''))
-            errMsg = errBody.error?.message || errBody.error || errMsg
-          } catch {
-            errMsg = result.error
-          }
-        }
-        if (result.status === 503) errMsg += '\n\n💡 503 通常表示模型正在加载或显存不足。'
-        throw new Error(errMsg)
-      }
-      if (!result.body || !result.body.trim()) throw new Error('返回空响应')
-      const data = JSON.parse(result.body)
-      if (!data.choices || data.choices.length === 0) throw new Error('返回空结果')
-      const msg = data.choices[0].message || {}
-      return { content: msg.content || msg.reasoning_content || msg.text || '', thinking: msg.reasoning_content || msg.thinking || null }
     },
 
     // ========= 对话历史 =========

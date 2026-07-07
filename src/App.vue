@@ -31,6 +31,7 @@
           <Moon v-else :size="18" />
           <span class="left-nav-label">{{ theme === 'dark' ? '浅色' : '深色' }}</span>
         </button>
+        <CloudAccount />
       </div>
     </nav>
 
@@ -56,6 +57,7 @@
 import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList, Presentation } from 'lucide-vue-next'
 import { markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
+import CloudAccount from './components/CloudAccount.vue'
 import UpdateChecker from './components/UpdateChecker.vue'
 import CopyrightGenerator from './views/CopyrightGenerator.vue'
 import ApiDocGenerator from './views/ApiDocGenerator.vue'
@@ -71,7 +73,7 @@ import { globalStore, initStore } from './core/global-store.js'
 
 export default {
   name: 'App',
-  components: { AiSidebar, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, PptGenerator, AiSettings, Server, ClipboardCheck, ClipboardList },
+  components: { AiSidebar, CloudAccount, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, PptGenerator, AiSettings, Server, ClipboardCheck, ClipboardList },
   provide() {
     return {
       showToast: this.showToast,
