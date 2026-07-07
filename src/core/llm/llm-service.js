@@ -604,11 +604,12 @@ export async function pollCloudLoginSession(serviceUrl, sessionId, pollToken) {
     return data
 }
 
-export async function loginCloudAccount(serviceUrl, accountName, password) {
+export async function loginCloudAccount(serviceUrl, accountName, password, captchaToken = '') {
     const clientId = await getCloudClientId()
     const data = await cloudPost(serviceUrl, '/auth/login', {
         account: accountName,
         password,
+        captchaToken,
         clientId,
         clientName: 'desktop',
     })
@@ -617,12 +618,25 @@ export async function loginCloudAccount(serviceUrl, accountName, password) {
     return { ...data, account }
 }
 
-export async function registerCloudAccount(serviceUrl, accountName, password, nickname = '') {
+// 兼容旧账号注册参数与新的邮箱验证码注册参数。
+// 新格式：{ email, code, password, nickname, captchaToken }。
+export async function registerCloudAccount(serviceUrl, accountOrPayload, password = '', nickname = '') {
     const clientId = await getCloudClientId()
+    const payload = accountOrPayload && typeof accountOrPayload === 'object'
+        ? {
+            email: accountOrPayload.email,
+            code: accountOrPayload.code,
+            password: accountOrPayload.password,
+            nickname: accountOrPayload.nickname || '',
+            captchaToken: accountOrPayload.captchaToken || '',
+        }
+        : {
+            account: accountOrPayload,
+            password,
+            nickname,
+        }
     const data = await cloudPost(serviceUrl, '/auth/register', {
-        account: accountName,
-        password,
-        nickname,
+        ...payload,
         clientId,
         clientName: 'desktop',
     })
@@ -631,8 +645,22 @@ export async function registerCloudAccount(serviceUrl, accountName, password, ni
     return { ...data, account }
 }
 
-export async function sendCloudEmailCode(serviceUrl, email) {
-    return await cloudPost(serviceUrl, '/auth/email/code', { email })
+// scene: 'register' | 'login'，用于后台区分注册/登录场景的邮箱验证码。
+// captchaToken: Cloudflare Turnstile 令牌，用于防止刷账号 / 刷邮件。
+// TODO(后台接口文档): 校对 /auth/email/code 的路径与字段名（email/scene/captchaToken）。
+export async function sendCloudEmailCode(serviceUrl, email, captchaToken = '', scene = 'login') {
+    return await cloudPost(serviceUrl, '/auth/email/code', { email, scene, captchaToken })
+}
+
+// 拉取云端公开配置（Turnstile sitekey 等）。接口不存在/失败时静默返回空对象，
+// 客户端据此在“未配置 sitekey”时降级为不强制人机验证。
+// TODO(后台接口文档): 校对公开配置接口路径与返回字段（turnstileSiteKey）。
+export async function fetchCloudConfig(serviceUrl) {
+    try {
+        return (await cloudGet(serviceUrl, '/config')) || {}
+    } catch {
+        return {}
+    }
 }
 
 export async function loginCloudEmailCode(serviceUrl, email, code) {
