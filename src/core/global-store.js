@@ -26,8 +26,9 @@ export async function initStore() {
   if (globalStore.providerConfigs.length > 0) {
     const found = globalStore.providerConfigs.find(p => p.id === providerId)
     const target = found || globalStore.providerConfigs[0]
+    const hasStoredModel = target.models.some(m => m.id === modelId)
     globalStore.activeProviderId = target.id
-    globalStore.activeModelId = modelId || target.activeModelId || (target.models[0]?.id || '')
+    globalStore.activeModelId = hasStoredModel ? modelId : (target.activeModelId || (target.models[0]?.id || ''))
   }
   globalStore.loaded = true
 }
@@ -44,8 +45,11 @@ export async function refreshProviderConfigs() {
     if (!found) {
       const { providerId, modelId } = await loadActiveSelection()
       const target = globalStore.providerConfigs.find(p => p.id === providerId) || globalStore.providerConfigs[0]
+      const hasStoredModel = target.models.some(m => m.id === modelId)
       globalStore.activeProviderId = target.id
-      globalStore.activeModelId = modelId || target.activeModelId || (target.models[0]?.id || '')
+      globalStore.activeModelId = hasStoredModel ? modelId : (target.activeModelId || (target.models[0]?.id || ''))
+    } else if (!found.models.some(m => m.id === globalStore.activeModelId)) {
+      globalStore.activeModelId = found.activeModelId || (found.models[0]?.id || '')
     }
   } else {
     globalStore.activeProviderId = null

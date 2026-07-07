@@ -11,7 +11,7 @@
         </span>
 
         <div class="ai-fill-group">
-          <button v-if="!aiProcessing" class="btn btn-primary btn-sm" @click="startAiGenerate">
+          <button v-if="!aiProcessing" class="btn btn-primary btn-sm" @click="startAiGenerate" :disabled="scanning || analyzing">
             <Sparkles :size="14" /> {{ deck ? '重新生成' : 'AI 生成' }}
           </button>
           <template v-else>
@@ -120,8 +120,8 @@
         <div class="card">
           <div class="card-header"><h3><Settings :size="14" /> 内容设置</h3></div>
           <div class="card-body" style="display:flex;flex-direction:column;gap:6px;">
-            <button class="btn btn-secondary btn-sm" style="width:100%;" :disabled="analyzing || aiProcessing || !scanResult" @click="analyzeProject">
-              <Wand2 :size="14" /> {{ analyzing ? '分析中...' : 'AI 业务分析 · 自动填主题/方向/风格' }}
+            <button class="btn btn-secondary btn-sm" style="width:100%;" :disabled="analyzing || aiProcessing || scanning || (!scanResult && projectDirs.length === 0)" @click="analyzeProject">
+              <Wand2 :size="14" /> {{ analyzing ? '分析中...' : scanResult ? 'AI 业务分析 · 自动填主题/方向/风格' : '扫描并分析 · 自动填主题/方向/风格' }}
             </button>
             <div v-if="businessBrief" class="business-brief-mini">
               <div class="bb-title">{{ businessBrief.projectType || businessBrief.summary || '业务上下文已生成' }}</div>
@@ -131,26 +131,38 @@
               <div class="bb-line" v-if="storyline?.narrative">{{ storyline.narrative }}</div>
             </div>
             <div class="form-group">
-              <label class="form-label">主题<span style="color:var(--text-muted);font-weight:400;"> · 留空则由 AI 分析项目拟定</span></label>
-              <input type="text" class="form-input" v-model="cfg.topic" placeholder="如：XX 管理系统 产品介绍" />
+              <label class="form-label">主题<span style="color:var(--text-muted);font-weight:400;"> · 可留空，AI 自动拟定</span></label>
+              <input type="text" class="form-input" v-model="cfg.topic" placeholder="可选，如：XX 管理系统 产品介绍" />
             </div>
             <div class="form-group">
-              <label class="form-label">受众</label>
-              <input type="text" class="form-input" v-model="cfg.audience" placeholder="公司领导 / 客户 / 技术团队" />
+              <label class="form-label">受众<span style="color:var(--text-muted);font-weight:400;"> · 可留空</span></label>
+              <input type="text" class="form-input" v-model="cfg.audience" placeholder="可选，如：公司领导 / 客户 / 技术团队" />
             </div>
             <div class="form-group">
-              <label class="form-label">内容大方向</label>
-              <textarea class="form-input" v-model="cfg.direction" rows="2" placeholder="希望突出的重点，如：技术架构 + 核心能力 + 实施成效"></textarea>
+              <label class="form-label">内容大方向<span style="color:var(--text-muted);font-weight:400;"> · 可留空</span></label>
+              <textarea class="form-input" v-model="cfg.direction" rows="2" placeholder="可选，希望突出的重点，如：技术架构 + 核心能力 + 实施成效"></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">编排自由度</label>
+              <select class="form-input" v-model="cfg.creativityMode">
+                <option value="free">自由发挥</option>
+                <option value="balanced">平衡</option>
+                <option value="strict">结构严谨</option>
+              </select>
             </div>
             <div style="display:flex;gap:6px;">
               <div class="form-group" style="flex:1;">
-                <label class="form-label">页数</label>
-                <input type="number" class="form-input" v-model.number="cfg.pageCount" min="3" max="40" :disabled="fixedTemplateSelected" />
+                <label class="form-label">页数<span style="color:var(--text-muted);font-weight:400;"> · 可留空</span></label>
+                <input type="number" class="form-input" v-model.number="cfg.pageCount" min="3" max="40" placeholder="默认 12" :disabled="fixedTemplateSelected" />
               </div>
               <div class="form-group" style="flex:1;">
-                <label class="form-label">语言</label>
-                <input type="text" class="form-input" v-model="cfg.language" placeholder="中文" />
+                <label class="form-label">语言<span style="color:var(--text-muted);font-weight:400;"> · 可留空</span></label>
+                <input type="text" class="form-input" v-model="cfg.language" placeholder="默认中文" />
               </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">输出上限</label>
+              <input type="number" class="form-input" v-model="cfg.maxOutputTokens" min="1" placeholder="留空不限制" />
             </div>
             <div class="form-group">
               <label class="form-label">落款（单位 / 作者 / 日期）</label>
@@ -187,7 +199,7 @@
         <div v-if="!deck" class="empty-state" style="flex:1;">
           <Presentation :size="48" style="opacity:0.3;margin-bottom:16px;" />
           <p>项目 PPT 生成器</p>
-          <p class="hint">左侧选模板与风格、填主题与页数（可扫描代码库作为依据），点击「AI 生成」。生成后右侧可直接拖拽、缩放、改字、增删元素。</p>
+          <p class="hint">左侧选模板与风格，主题、受众、方向和页数都可留空；选择目录后点击「AI 生成」会自动扫描并分析。生成后右侧可直接拖拽、缩放、改字、增删元素。</p>
         </div>
 
         <template v-else>
@@ -305,6 +317,7 @@ import { getPptPresets, toDeckSkeleton } from '../core/ppt/ppt-template-presets.
 import { loadCustomPptTemplates, saveCustomPptTemplate, deleteCustomPptTemplate } from '../core/ppt/ppt-template-store.js'
 import { renderDeckToPptx } from '../core/ppt/ppt-pptx-renderer.js'
 import { savePageConfig, loadPageConfig, getSetting, setSetting } from '../core/db.js'
+import { modelSnapshot, pptArtifact, saveHistoryRecord, scanSourceSnapshot } from '../core/generation-history.js'
 
 export default {
   name: 'PptGenerator',
@@ -326,7 +339,7 @@ export default {
       currentSlideIndex: 0,
       selectedElId: null,
       canvasWidth: 880,
-      cfg: { topic: '', audience: '', direction: '', pageCount: 12, language: '中文', footnote: '' },
+      cfg: { topic: '', audience: '', direction: '', pageCount: 12, language: '中文', creativityMode: 'free', maxOutputTokens: '', footnote: '' },
       selectedTemplateId: 'ppt-auto',
       styleOverrideId: '',
       customTemplates: [],
@@ -337,6 +350,7 @@ export default {
       aiProcessing: false,
       aiProgressText: '',
       aiController: null,
+      aiRunId: 0,
       exporting: false,
       selectedProviderId: null,
       selectedModelId: null,
@@ -348,9 +362,9 @@ export default {
       return [...getPptPresets().map(t => ({ ...t, isCustom: false })), ...this.customTemplates.map(t => ({ ...t, isCustom: true }))]
     },
     templatePreviews() {
-      const sample = { kicker: '产品', title: '项目名称', subtitle: '一句话价值主张', footnote: '汇报单位 · 2026' }
       return this.allTemplates.map(t => {
-        const sid = (!t.styleId || t.styleId === 'auto') ? 'tech-dark' : t.styleId
+        const sample = this.templatePreviewSample(t)
+        const sid = this.templatePreviewStyleId(t)
         return { ...t, slide: buildSlide('cover', sample, getStyle(sid), 1) }
       })
     },
@@ -449,7 +463,7 @@ export default {
       if (this.projectDirs.length === 0) this.scanResult = null
     },
     async startScan() {
-      if (this.projectDirs.length === 0) return
+      if (this.projectDirs.length === 0) return false
       this.scanning = true
       this.businessBrief = null
       this.storyline = null
@@ -459,18 +473,13 @@ export default {
         const { totalFiles } = this.scanResult.stats
         const bizCount = (this.scanResult.business?.keyFiles || []).length
         this.showToast(`扫描完成！发现 ${totalFiles} 个文件，业务线索 ${bizCount} 处`, 'success')
-        if (!this.cfg.topic) {
-          for (const cfg of this.scanResult.configs) {
-            if (cfg.name !== 'package.json') continue
-            let pkgName = ''
-            try { pkgName = (JSON.parse(cfg.content).name || '').trim() } catch (e) { continue }
-            if (pkgName) { this.cfg.topic = pkgName + ' 产品介绍'; break }
-          }
-        }
+        return true
       } catch (e) {
         this.showToast('扫描失败: ' + String(e), 'error')
+        return false
+      } finally {
+        this.scanning = false
       }
-      this.scanning = false
     },
 
     // ===== 图片素材 =====
@@ -521,20 +530,61 @@ export default {
         ptr.v += n
       }
     },
+    templatePreviewStyleId(t) {
+      if (t?.id === 'ppt-auto') {
+        return this.styleOverrideId || this.businessBrief?.styleId || this.inferAutoPreviewStyle()
+      }
+      if (!t?.styleId || t.styleId === 'auto') return this.styleOverrideId || 'business-clean'
+      return t.styleId
+    },
+    inferAutoPreviewStyle() {
+      const text = `${this.cfg.topic || ''} ${this.cfg.audience || ''} ${this.cfg.direction || ''}`.toLowerCase()
+      if (/品牌|文化|公益|教育|温暖|社区/.test(text)) return 'warm-brand'
+      if (/农业|环保|绿色|健康|医疗|生态/.test(text)) return 'forest'
+      if (/发布|活动|营销|增长|新品/.test(text)) return 'coral'
+      if (/投资|路演|融资|高端|战略/.test(text)) return 'deep-green-luxe'
+      if (/创意|故事|叙事|设计|内容/.test(text)) return 'magazine'
+      if (/安全|风控|合规|治理|审计|权限/.test(text)) return 'business-clean'
+      if (/服务|方案|客户|运营|管理|协同/.test(text)) return 'teal-trust'
+      return 'business-clean'
+    },
+    templatePreviewSample(t) {
+      if (t?.id === 'ppt-auto') {
+        const topic = (this.cfg.topic || this.businessBrief?.topic || '主题由 AI 设计').trim()
+        const direction = String(this.cfg.direction || this.businessBrief?.summary || '')
+          .split(/\n|。|；|;/).map(s => s.trim()).find(Boolean)
+        return {
+          kicker: '智能主题',
+          title: topic.slice(0, 32),
+          subtitle: (direction || '按内容生成专属叙事与视觉气质').slice(0, 42),
+          footnote: '自动编排 · 主题策划',
+        }
+      }
+      return {
+        kicker: t?.styleId === 'business-clean' ? '汇报' : t?.styleId === 'magazine' ? '叙事' : t?.styleId === 'teal-trust' ? '方案' : '主题',
+        title: '项目名称',
+        subtitle: '一句话价值主张',
+        footnote: '汇报单位 · 2026',
+      }
+    },
 
     // ===== 项目分析 =====
     async analyzeProject() {
       if (this.analyzing || this.aiProcessing) return
       const llmConfig = this.resolveLlm()
       if (!llmConfig) return
-      if (!this.scanResult) { this.showToast('请先扫描代码库', 'warning'); return }
+      if (!this.scanResult) {
+        if (this.projectDirs.length === 0) { this.showToast('请先添加项目目录', 'warning'); return }
+        const ok = await this.startScan()
+        if (!ok || !this.scanResult) return
+      }
       this.analyzing = true
       try {
         const scanContext = this.buildContext()
         this.addLog('[进行] 业务分析 Agent：识别用户、流程、能力与价值...')
         const brief = await generateBusinessBrief(llmConfig, scanContext, { ...this.cfg })
         this.businessBrief = brief
-        this.applyBusinessBriefToCfg(brief, { overwriteDirection: true })
+        this.applyBusinessBriefToCfg(brief, { overwriteDirection: true, applyStyle: false })
         this.addLog('[进行] 叙事规划 Agent：组织业务汇报主线...')
         this.storyline = await generateStoryline(llmConfig, brief, scanContext, { ...this.cfg })
         this.showToast(brief.summary ? `已分析：${brief.summary}` : '已生成业务上下文', 'success')
@@ -606,28 +656,51 @@ export default {
       if (tplStyle && tplStyle !== 'auto') return tplStyle
       return outlineStyleId || pickRandomStyle(this.lastStyleId).id
     },
+    beginAiRun(controller, progressText = '') {
+      const runId = this.aiRunId + 1
+      this.aiRunId = runId
+      this.aiProcessing = true
+      this.aiController = controller
+      this.aiProgressText = progressText
+      window.dispatchEvent(new Event('ai-fill-start'))
+      return runId
+    },
+    finishAiRun(runId, progressText = '') {
+      if (runId && this.aiRunId !== runId) return
+      this.aiProcessing = false
+      this.aiProgressText = progressText
+      this.aiController = null
+      window.dispatchEvent(new Event('ai-fill-stop'))
+    },
+    clearPendingSlides(fromIndex = 0) {
+      if (!this.deck?.slides) return
+      for (let i = Math.max(0, fromIndex); i < this.deck.slides.length; i++) {
+        this.deck.slides[i].pending = false
+      }
+    },
 
     async startAiGenerate() {
       if (this.aiProcessing) return
-      if (!this.cfg.topic && !this.scanResult) { this.showToast('请填写主题，或先扫描代码库', 'warning'); return }
       const llmConfig = this.resolveLlm()
       if (!llmConfig) return
+      if (!this.scanResult && this.projectDirs.length > 0) {
+        const ok = await this.startScan()
+        if (!ok || !this.scanResult) return
+      }
 
       const controller = createAiController()
-      this.aiProcessing = true
-      this.aiController = controller
-      window.dispatchEvent(new Event('ai-fill-start'))
+      const runId = this.beginAiRun(controller)
       const scanContext = this.buildContext()
       const tpl = this.selectedTemplate
       const imgSrcs = this.images.map(i => i.src)
 
       try {
         const tplStyle = (tpl?.styleId && tpl.styleId !== 'auto') ? tpl.styleId : null
-        let genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || this.businessBrief?.styleId || 'auto' }
+        let genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || 'auto' }
 
         if (this.scanResult) {
           await this.ensureBusinessContext(llmConfig, scanContext, genCfg, { signal: controller.signal })
-          genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || this.businessBrief?.styleId || 'auto' }
+          genCfg = { ...this.cfg, imageCount: imgSrcs.length, styleId: this.styleOverrideId || tplStyle || 'auto' }
         }
         const contextSummary = this.buildPptContext(scanContext, genCfg) || scanContext
 
@@ -651,8 +724,22 @@ export default {
         setSetting('ppt-last-style', outline.styleId).catch(() => {})
 
         // 注入落款到封面/封底
-        const meta = { topic: this.cfg.topic, audience: this.cfg.audience, language: this.cfg.language, direction: this.cfg.direction, footnote: this.cfg.footnote }
-        this.deck = buildDeckFromOutline(outline, meta)
+        const meta = { topic: this.cfg.topic, audience: this.cfg.audience, language: this.cfg.language, direction: this.cfg.direction, footnote: this.cfg.footnote, theme: outline.theme }
+        const deckOutline = outline.theme ? {
+          ...outline,
+          slides: outline.slides.map((s, idx) => (idx === 0 && s.layout === 'cover'
+            ? {
+              ...s,
+              content: {
+                kicker: outline.theme.coverKicker || '主题策划',
+                title: s.title || this.cfg.topic || outline.theme.name || '项目名称',
+                subtitle: outline.theme.concept || s.intent || '由 AI 生成专属叙事与视觉气质',
+                footnote: this.cfg.footnote || '汇报单位 · 2026',
+              },
+            }
+            : s)),
+        } : outline
+        this.deck = buildDeckFromOutline(deckOutline, meta)
         this.deck.assets = { images: imgSrcs }
         this.deck.businessBrief = this.businessBrief
         this.deck.storyline = this.storyline
@@ -672,7 +759,7 @@ export default {
           this.aiProgressText = `[${i + 1}/${outline.slides.length}] ${o.title || o.layout}`
           this.currentSlideIndex = i
           try {
-            const content = await generateSlideContent(llmConfig, o, contextSummary, genCfg, prevTitles.slice(-12), { signal: controller.signal })
+            const content = await generateSlideContent(llmConfig, o, contextSummary, { ...genCfg, theme: outline.theme }, prevTitles.slice(-12), { signal: controller.signal })
             prevTitles.push(content.title || o.title || '')
             this.applyCoverFootnote(o.layout, content)
             this.assignImages(o.layout, content, imgSrcs, imgPtr)
@@ -689,19 +776,48 @@ export default {
             const idx = this.deck.slides.findIndex(s => s.id === slideId)
             if (idx >= 0) this.deck.slides[idx].pending = false
             this.addLog(`[失败] 第 ${i + 1} 页：${e.message}`, 'error')
+            this.clearPendingSlides(i + 1)
+            throw e
           }
         }
         if (controller.cancelled) this.showToast('已停止生成', 'info')
-        else this.showToast('PPT 生成完成！可直接在右侧编辑', 'success')
+        else {
+          const provider = this.globalStore.providerConfigs.find(p => p.id === this.selectedProviderId)
+          await saveHistoryRecord({
+            type: 'ppt',
+            title: `${this.cfg.topic || '未命名项目'} PPT`,
+            summary: `${this.deck?.slides?.length || 0} 页，风格 ${getStyle(this.deck?.styleId)?.name || this.deck?.styleId || '-'}，${this.projectDirs.length} 个目录`,
+            providerId: provider?.id || '',
+            modelId: llmConfig.model,
+            source: {
+              ...scanSourceSnapshot(this.projectDirs, this.scanResult, []),
+              images: this.images.map(i => ({ name: i.name || '图片', size: i.size || 0 })),
+              businessBrief: this.businessBrief,
+              storyline: this.storyline,
+            },
+            settings: {
+              cfg: genCfg,
+              model: modelSnapshot(provider, this.selectedModelId, llmConfig),
+              template: tpl ? { id: tpl.id, name: tpl.name, mode: tpl.mode, styleId: tpl.styleId } : null,
+              styleOverrideId: this.styleOverrideId,
+            },
+            result: {
+              slideCount: this.deck?.slides?.length || 0,
+              styleId: this.deck?.styleId || '',
+              outline,
+            },
+            artifact: pptArtifact(this.deck, genCfg, tpl, this.deck?.styleId || ''),
+          })
+          this.showToast('PPT 生成完成！可直接在右侧编辑', 'success')
+        }
       } catch (e) {
-        if (e.name === 'AbortError' || e.message === '已取消' || controller.cancelled) this.showToast('已停止生成', 'info')
+        this.clearPendingSlides()
+        const stopped = e.name === 'AbortError' || e.message === '已取消' || controller.cancelled
+        this.finishAiRun(runId, stopped ? '已停止' : '')
+        if (stopped) this.showToast('已停止生成', 'info')
         else this.showToast('生成失败: ' + String(e.message || e), 'error')
       } finally {
-        if (this.aiController === controller) {
-          this.aiProcessing = false
-          this.aiProgressText = ''
-          this.aiController = null
-        }
+        this.finishAiRun(runId)
       }
     },
     applyCoverFootnote(layout, content) {
@@ -715,9 +831,7 @@ export default {
       const i = this.currentSlideIndex
       const s = this.currentSlide
       const controller = createAiController()
-      this.aiProcessing = true
-      this.aiController = controller
-      this.aiProgressText = `重生成第 ${i + 1} 页…`
+      const runId = this.beginAiRun(controller, `重生成第 ${i + 1} 页…`)
       s.pending = true
       try {
         const o = { layout: s.layout, title: s.title, intent: s.intent || '' }
@@ -742,24 +856,22 @@ export default {
           this.showToast('本页已重生成', 'success')
         }
       } catch (e) {
-        if (e.name === 'AbortError' || controller.cancelled) this.showToast('已停止生成', 'info')
+        const stopped = e.name === 'AbortError' || controller.cancelled
+        this.finishAiRun(runId, stopped ? '已停止' : '')
+        if (stopped) this.showToast('已停止生成', 'info')
         else this.showToast('重生成失败: ' + String(e.message || e), 'error')
       } finally {
         const current = this.deck?.slides.find(x => x.id === s.id)
         if (current) current.pending = false
-        if (this.aiController === controller) {
-          this.aiProcessing = false
-          this.aiProgressText = ''
-          this.aiController = null
-        }
+        this.finishAiRun(runId)
       }
     },
     toggleAiPause() { if (this.aiController) this.aiController.paused ? this.aiController.resume() : this.aiController.pause() },
     cancelAi() {
       if (!this.aiController) return
       this.aiController.cancel()
-      this.aiProcessing = false
-      this.aiProgressText = '已停止'
+      this.clearPendingSlides()
+      this.finishAiRun(this.aiRunId, '已停止')
     },
 
     // ===== 幻灯片操作 =====

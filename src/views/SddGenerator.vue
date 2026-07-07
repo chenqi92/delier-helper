@@ -194,6 +194,7 @@ import { fillDocSections, buildDocSectionPrompt, applyDocSectionResult, evaluate
 const SECTION_TEMPERATURE = { diagram: 0.1, table: 0.35, text: 0.55 }
 import { loadProviderConfigs, loadActiveSelection, getResolvedConfig, callLlm } from '../core/llm/llm-service.js'
 import { saveRecentProject, getRecentProjects, savePageConfig, loadPageConfig, getSetting, setSetting } from '../core/db.js'
+import { modelSnapshot, saveHistoryRecord, scanSourceSnapshot, sectionsArtifact } from '../core/generation-history.js'
 import SectionEditor from '../components/SectionEditor.vue'
 import TemplateSelector from '../components/TemplateSelector.vue'
 import ReferenceFiles from '../components/ReferenceFiles.vue'
@@ -420,7 +421,28 @@ export default {
           controller,
         )
         if (controller.cancelled) this.showToast('已停止生成', 'info')
-        else this.showToast('文档生成完成！', 'success')
+        else {
+          const generatedCount = getEnabledLeafSections(this.sections).filter(s => s.content || s.mermaidCode || s.imageData).length
+          await saveHistoryRecord({
+            type: 'sdd-doc',
+            title: `${this.docInfo.projectName || '系统'} 设计文档`,
+            summary: `${generatedCount} 个章节已生成，${this.projectDirs.length} 个目录`,
+            providerId: provider.id,
+            modelId: config.model,
+            source: scanSourceSnapshot(this.projectDirs, this.scanResult, this.referenceFiles),
+            settings: {
+              docInfo: this.docInfo,
+              model: modelSnapshot(provider, this.selectedModelId, config),
+              enabledSections: getEnabledLeafSections(this.sections).map(s => ({ number: s.number, title: s.title, type: s.type })),
+            },
+            result: {
+              generatedSections: generatedCount,
+              totalSections: getEnabledLeafSections(this.sections).length,
+            },
+            artifact: sectionsArtifact(this.sections, this.docInfo),
+          })
+          this.showToast('文档生成完成！', 'success')
+        }
       } catch (e) {
         if (e?.name === 'AbortError' || controller.cancelled) this.showToast('已停止生成', 'info')
         else this.showToast('生成失败: ' + String(e), 'error')

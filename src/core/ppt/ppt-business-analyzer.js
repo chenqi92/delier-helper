@@ -38,6 +38,45 @@ function text(v, max = 200) {
   return String(v || '').replace(/\s+/g, ' ').trim().slice(0, max)
 }
 
+function explicitMaxTokens(cfg) {
+  const v = Number(cfg?.maxOutputTokens || 0)
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined
+}
+
+function creativityModeOf(cfg = {}) {
+  const mode = String(cfg?.creativityMode || 'free')
+  return ['free', 'balanced', 'strict'].includes(mode) ? mode : 'free'
+}
+
+function storylineTemperature(cfg = {}) {
+  const mode = creativityModeOf(cfg)
+  if (mode === 'strict') return 0.4
+  if (mode === 'balanced') return 0.55
+  return 0.75
+}
+
+function storylineModePrompt(cfg = {}) {
+  const mode = creativityModeOf(cfg)
+  if (mode === 'strict') {
+    return `1. 站在业务视角组织内容：用户/场景/流程/能力/价值/实施与风险。
+2. 技术架构只能服务业务价值，不要把技术栈铺成主线。
+3. mustHaveSlides 只给关键页，不需要凑满页数；后续大纲 Agent 会扩展。
+4. 不要编造数字和客户案例。只输出 JSON。`
+  }
+  if (mode === 'balanced') {
+    return `1. 站在业务视角组织内容，但不要固定成“用户/场景/流程/能力/价值/实施与风险”的同一套顺序。
+2. 可以根据主题选择更自然的叙事方式，例如问题推进、产品演示、价值对照、决策建议、路线图或案例拆解。
+3. 技术架构只能服务业务价值，不要把技术栈铺成主线。
+4. sections / mustHaveSlides 只给关键建议，允许后续大纲 Agent 重组。
+5. 不要编造数字和客户案例。只输出 JSON。`
+  }
+  return `1. 自由设计叙事主线，不要默认套用“背景-现状-挑战-方案-流程-价值-落地”的固定汇报结构。
+2. 可以选择故事开场、问题悬念、反差对照、用户旅程、产品演示、案例拆解、决策备忘录、路线图、能力宣言、风险反推等任意形态。
+3. sections / mustHaveSlides 是灵感素材，不要写成必须逐条执行的模板；给出少量最有表现力的建议即可。
+4. 技术架构只能服务业务价值，不要把技术栈铺成主线。
+5. 不要编造数字和客户案例。只输出 JSON。`
+}
+
 function list(v, max = 8) {
   if (!Array.isArray(v)) return []
   const out = []
@@ -186,7 +225,7 @@ ${contextSummary || '（无扫描上下文）'}`
 export async function generateBusinessBrief(llmConfig, contextSummary, cfg = {}, opts = {}) {
   const messages = buildBusinessBriefMessages(contextSummary, cfg)
   const textOut = await callLlm(llmConfig, messages, {
-    maxTokens: llmConfig.maxOutputTokens || 8192,
+    maxTokens: explicitMaxTokens(cfg),
     temperature: 0.35,
     jsonMode: true,
     signal: opts.signal,
@@ -195,6 +234,7 @@ export async function generateBusinessBrief(llmConfig, contextSummary, cfg = {},
 }
 
 export function buildStorylineMessages(businessBrief, contextSummary, cfg = {}) {
+  const modeRules = storylineModePrompt(cfg)
   const system = `你是“PPT 汇报叙事 Agent”。基于业务简报，为项目 PPT 设计一条业务汇报主线。
 
 只输出 JSON：
@@ -208,10 +248,7 @@ export function buildStorylineMessages(businessBrief, contextSummary, cfg = {}) 
 }
 
 规则：
-1. 站在业务视角组织内容：用户/场景/流程/能力/价值/实施与风险。
-2. 技术架构只能服务业务价值，不要把技术栈铺成主线。
-3. mustHaveSlides 只给关键页，不需要凑满页数；后续大纲 Agent 会扩展。
-4. 不要编造数字和客户案例。只输出 JSON。`
+${modeRules}`
 
   const user = `# 目标
 页数：${cfg.pageCount || 12}
@@ -230,8 +267,8 @@ ${contextSummary || ''}`
 export async function generateStoryline(llmConfig, businessBrief, contextSummary, cfg = {}, opts = {}) {
   const messages = buildStorylineMessages(businessBrief, contextSummary, cfg)
   const textOut = await callLlm(llmConfig, messages, {
-    maxTokens: llmConfig.maxOutputTokens || 4096,
-    temperature: 0.45,
+    maxTokens: explicitMaxTokens(cfg),
+    temperature: storylineTemperature(cfg),
     jsonMode: true,
     signal: opts.signal,
   })
@@ -245,7 +282,9 @@ export function buildPptBusinessContext({ scanContext = '', businessBrief = null
     parts.push(JSON.stringify(businessBrief, null, 2))
   }
   if (storyline) {
-    parts.push('## 汇报叙事主线（PPT 大纲优先遵循）')
+    parts.push(creativityModeOf(cfg) === 'free'
+      ? '## 汇报叙事灵感（自由模式下仅作参考，可重组改写）'
+      : '## 汇报叙事主线（PPT 大纲优先遵循）')
     parts.push(JSON.stringify(storyline, null, 2))
   }
   if (cfg.topic || cfg.audience || cfg.direction) {

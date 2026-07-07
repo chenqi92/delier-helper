@@ -422,6 +422,7 @@ import { isPlaceholder } from '../core/api-doc/spring-boot-parser.js'
 import { renderMarkdown, renderDocx, DEFAULT_DOC_MODULES } from '../core/api-doc/api-doc-renderer.js'
 import { loadProviderConfigs, loadActiveSelection, fillApiDocPlaceholders, createAiController, getResolvedConfig } from '../core/llm/llm-service.js'
 import { saveRecentProject, getRecentProjects, getSetting, setSetting } from '../core/db.js'
+import { apiArtifact, modelSnapshot, saveHistoryRecord } from '../core/generation-history.js'
 import GuideTour from '../components/GuideTour.vue'
 import {
   FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
@@ -709,6 +710,29 @@ export default {
         const apiCount = result.modules.reduce((s, m) => s + m.apis.length, 0)
         this.parsePercent = 100
         this.addLog(`[完成] 解析完成！${result.modules.length} 个模块，${apiCount} 个接口`)
+        await saveHistoryRecord({
+          type: 'api-doc',
+          title: `${this.projectDir.split(/[/\\]/).pop() || '项目'} 接口文档`,
+          summary: `${result.modules.length} 个模块，${apiCount} 个接口`,
+          source: {
+            projectDir: this.projectDir,
+            language: lang,
+            sourceFileCount: sourceFiles.length,
+            parsedFileCount: allFiles.length,
+          },
+          settings: {
+            customPrefix: this.customPrefix,
+            groupByController: this.groupByController,
+            showModulePath: this.showModulePath,
+            docModules: this.docModules,
+          },
+          result: {
+            moduleCount: result.modules.length,
+            apiCount,
+            selectedModules: this.selectedModules,
+          },
+          artifact: apiArtifact(result, this.docModules),
+        })
         this.showToast(`解析完成！发现 ${result.modules.length} 个模块，${apiCount} 个接口`, 'success')
       } catch (e) {
         this.showToast('解析失败: ' + String(e), 'error')
@@ -875,6 +899,30 @@ export default {
         } else {
           this.showToast(`AI 补充完成: ${result.filled}/${result.total} 个字段已填充`, 'success')
           this.parseResult = { ...this.parseResult }
+          await saveHistoryRecord({
+            type: 'api-doc',
+            title: `${this.projectDir.split(/[/\\]/).pop() || '项目'} 接口文档（AI 补充）`,
+            summary: `${this.filteredModules.length} 个模块，${this.filteredApis} 个接口，补充 ${result.filled}/${result.total} 个字段`,
+            providerId: provider.id,
+            modelId: config.model,
+            source: {
+              projectDir: this.projectDir,
+              language: this.detectedLang,
+            },
+            settings: {
+              model: modelSnapshot(provider, this.selectedModelId, config),
+              customPrefix: this.customPrefix,
+              groupByController: this.groupByController,
+              showModulePath: this.showModulePath,
+              docModules: this.docModules,
+            },
+            result: {
+              filled: result.filled,
+              total: result.total,
+              selectedModules: this.selectedModules,
+            },
+            artifact: apiArtifact(this.parseResult, this.docModules),
+          })
         }
       } catch (e) {
         if (e?.name === 'AbortError' || controller.cancelled) {

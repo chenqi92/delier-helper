@@ -22,8 +22,12 @@ export const LLM_PROVIDERS = [
         label: 'OpenAI',
         baseUrl: 'https://api.openai.com/v1',
         models: [
-            { id: 'gpt-5', label: 'GPT-5', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true }, contextLength: 128000 },
-            { id: 'gpt-5-mini', label: 'GPT-5 Mini', capabilities: { multimodal: true, codeGen: true, functionCall: true }, contextLength: 128000 },
+            { id: 'gpt-5.5', label: 'GPT-5.5', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1048576, maxOutputTokens: 131072 },
+            { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini', capabilities: { multimodal: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1048576 },
+            { id: 'gpt-5.4-nano', label: 'GPT-5.4 Nano', capabilities: { multimodal: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1048576 },
+            { id: 'gpt-5-codex', label: 'GPT-5 Codex', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1048576 },
+            { id: 'gpt-5', label: 'GPT-5', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true }, contextLength: 400000, maxOutputTokens: 131072 },
+            { id: 'gpt-5-mini', label: 'GPT-5 Mini', capabilities: { multimodal: true, codeGen: true, functionCall: true }, contextLength: 400000, maxOutputTokens: 131072 },
             { id: 'gpt-4.1', label: 'GPT-4.1', capabilities: { multimodal: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1048576 },
             { id: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', capabilities: { multimodal: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1048576 },
             { id: 'gpt-4.1-nano', label: 'GPT-4.1 Nano', capabilities: { codeGen: true, longContext: true }, contextLength: 1048576 },
@@ -120,6 +124,9 @@ export const LLM_PROVIDERS = [
         baseUrl: 'https://api.anthropic.com/v1',
         note: '支持官方 Anthropic Messages API；OpenAI 兼容代理仍可用自定义厂商接入，最新模型 ID 以官方文档或「检测模型」为准',
         models: [
+            { id: 'claude-fable-5', label: 'Claude Fable 5', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1000000, maxOutputTokens: 131072 },
+            { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1000000, maxOutputTokens: 131072 },
+            { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1000000 },
             { id: 'claude-opus-4-7', label: 'Claude Opus 4.7', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true, longContext: true }, contextLength: 1000000 },
             { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', capabilities: { multimodal: true, deepThinking: true, codeGen: true, functionCall: true }, contextLength: 200000 },
             { id: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', capabilities: { multimodal: true, codeGen: true, functionCall: true }, contextLength: 200000 },
@@ -524,6 +531,38 @@ function parseHttpErrorMessage(result) {
     }
 }
 
+function isModelUnsupportedError(message) {
+    const text = String(message || '').toLowerCase()
+    return /当前\s*api\s*不支持所选模型|不支持.*模型|模型.*不支持|unsupported.*model|model.*unsupported|model_not_found|model.*not.*found|model.*not.*available|invalid.*model|does not exist/.test(text)
+}
+
+function isModelTemporarilyUnavailableError(message) {
+    const text = String(message || '').toLowerCase()
+    return isModelUnsupportedError(text)
+        || /负载.*(上限|过高|繁忙)|达到.*上限|稍后重试|overloaded|temporarily unavailable|currently unavailable|rate[_ -]?limit|too many requests|quota|capacity|busy/.test(text)
+}
+
+function isChatModelCandidate(modelId) {
+    const id = String(modelId || '').toLowerCase()
+    return !!id && !/tts|voice|embedding|rerank|moderation|whisper|image|dall|sora|realtime|audio|transcribe/.test(id)
+}
+
+function friendlyModelUnsupportedMessage(message, config = {}) {
+    const model = config.model || '当前模型'
+    const protocol = config.isAnthropic ? 'Anthropic Messages' : 'OpenAI Chat Completions'
+    const parts = [
+        `当前 API 返回模型不可用：${message || model}。`,
+        `这通常表示模型列表接口虽然展示了 ${model}，但当前账号、路由或接口协议不能实际调用它。`,
+        `本次请求使用的是 ${protocol} 协议。`,
+    ]
+    if (!config.isAnthropic && /^claude-/i.test(model)) {
+        parts.push('如果供应商要求 Claude 走 Anthropic 兼容接口，请改用带 Anthropic 路由的 Base URL；否则请换成该 OpenAI 兼容接口实际支持的模型。')
+    } else {
+        parts.push('请换成该 API 实际支持的模型，或确认供应商套餐与模型权限。')
+    }
+    return parts.join('')
+}
+
 async function cloudPost(serviceUrl, path, body, apiKey = '', clientId = '') {
     const base = normalizeCloudServiceUrl(serviceUrl)
     const result = await invoke('llm_request', {
@@ -729,13 +768,13 @@ export async function syncCloudProvider(serviceUrl) {
     if (!account) throw new Error('请先登录云端账号')
     account = await ensureCloudAccessToken()
     const data = await cloudGet(serviceUrl || account.serviceUrl, '/v1/models', account.accessToken || account.token || '', account.clientId || '')
-    const models = Array.isArray(data.data) ? data.data.map(m => ({
+    const models = promotePreferredDefaultModel(Array.isArray(data.data) ? data.data.map(m => ({
         id: m.id,
         label: m.id,
         capabilities: {},
-        contextLength: 32768,
-        maxOutputTokens: 4096,
-    })) : []
+        contextLength: m.context_length || m.contextLength || inferContextLengthFromId(m.id) || 32768,
+        ...(m.max_output_tokens || m.maxOutputTokens ? { maxOutputTokens: m.max_output_tokens || m.maxOutputTokens } : {}),
+    })) : [])
     const provider = {
         id: CLOUD_PROVIDER_ID,
         providerId: 'ranzhu-cloud',
@@ -795,6 +834,9 @@ export function getResolvedConfig(providerCfg, modelId) {
         cloudManaged: !!providerCfg.cloudManaged || providerCfg.providerId === 'ranzhu-cloud',
         clientId: providerCfg.clientId || '',
         model: resolvedModelId,
+        fallbackModels: (providerCfg.models || [])
+            .map(m => m.id)
+            .filter(id => id !== resolvedModelId && isChatModelCandidate(id)),
         maxOutputTokens: modelObj?.maxOutputTokens || 0,
     }
 }
@@ -804,7 +846,7 @@ export function getResolvedConfig(providerCfg, modelId) {
  */
 export function getDefaultModels(providerId) {
     const p = LLM_PROVIDERS.find(p => p.id === providerId)
-    return p ? p.models.map(m => ({ ...m })) : []
+    return p ? promotePreferredDefaultModel(p.models.map(m => ({ ...m }))) : []
 }
 
 /**
@@ -876,13 +918,15 @@ function inferContextLengthFromId(modelId) {
     const id = (modelId || '').toLowerCase()
 
     // ===== 1M 级别 =====
-    if (/gpt-4\.1|gpt-5/.test(id)) return 1000000
+    if (/gpt-5\.[45]|gpt-5.*codex/.test(id)) return 1000000
+    if (/gpt-5/.test(id)) return 400000
+    if (/gpt-4\.1/.test(id)) return 1000000
     if (/gemini-(2\.5|3)/.test(id)) return 1048576
     if (/qwen.*-long/.test(id) || /qwen-turbo/.test(id)) return 1000000
     if (/glm-4-long/.test(id)) return 1000000
 
     // ===== 200K 级别 =====
-    if (/claude/.test(id) && /opus-4-7|opus.*4\.7|opus-4\.7/.test(id)) return 1000000
+    if (/claude/.test(id) && /(fable-5|sonnet-5|opus-4-[78]|opus.*4\.[78]|opus-4\.[78])/.test(id)) return 1000000
     if (/claude/.test(id)) return 200000
     if (/o[134]\b|o4-mini/.test(id)) return 200000
 
@@ -1042,6 +1086,69 @@ function normalizeDetectedModels(data, isOllama) {
         .filter(Boolean)
 }
 
+export function scoreModelForDefault(model) {
+    const id = String(model?.id || '').toLowerCase()
+    const label = String(model?.label || '').toLowerCase()
+    const text = `${id} ${label}`
+    const caps = model?.capabilities || {}
+    let score = 0
+
+    if (caps.deepThinking) score += 120
+    if (caps.codeGen) score += 80
+    if (caps.functionCall) score += 40
+    if (caps.multimodal) score += 30
+    if ((model?.contextLength || 0) >= 1000000) score += 45
+    else if ((model?.contextLength || 0) >= 200000) score += 25
+    else if ((model?.contextLength || 0) >= 100000) score += 10
+
+    const strongPatterns = [
+        [/gpt-5\.5/, 900],
+        [/claude-fable-5/, 880],
+        [/claude-opus-4-8/, 850],
+        [/gpt-5(\b|[^.\d])/, 820],
+        [/claude-sonnet-5/, 800],
+        [/gpt-5.*codex|codex.*gpt-5/, 780],
+        [/gemini-2\.5-pro/, 720],
+        [/claude-opus-4-7/, 700],
+        [/claude-opus-4-6/, 680],
+        [/claude-sonnet-4-6|claude-sonnet-4-5/, 650],
+        [/o[34](\b|-)/, 600],
+        [/deepseek.*reasoner|deepseek.*r1/, 560],
+        [/deepseek.*chat|deepseek.*v3/, 520],
+        [/qwen.*max|qwen.*plus|qwen.*coder/, 480],
+    ]
+    let strongScore = 0
+    for (const [pattern, value] of strongPatterns) {
+        if (pattern.test(text)) strongScore = Math.max(strongScore, value)
+    }
+    score += strongScore
+
+    if (/latest|pro|max|opus|sonnet|reason|thinking|codex/.test(text)) score += 35
+    if (/haiku|mini|nano|lite|flash|turbo|instant|preview|tts|embedding|rerank|audio|image|moderation/.test(text)) score -= 180
+    if (/3[-.]5|3-5|2024|legacy|deprecated/.test(text)) score -= 90
+    if (/tts|voice|embedding|rerank|moderation|whisper|image|dall|sora/.test(text)) score -= 1000
+
+    return score
+}
+
+export function promotePreferredDefaultModel(models) {
+    if (!Array.isArray(models) || models.length <= 1) return Array.isArray(models) ? models : []
+    let bestIdx = 0
+    let bestScore = scoreModelForDefault(models[0])
+    for (let i = 1; i < models.length; i++) {
+        const score = scoreModelForDefault(models[i])
+        if (score > bestScore) {
+            bestScore = score
+            bestIdx = i
+        }
+    }
+    if (bestIdx <= 0) return models
+    const next = [...models]
+    const [best] = next.splice(bestIdx, 1)
+    next.unshift(best)
+    return next
+}
+
 /**
  * 自动检测本地 LLM 服务的可用模型列表
  * @param {Object} providerCfg - 包含 providerId, baseUrl, apiKey 的配置
@@ -1083,7 +1190,7 @@ export async function detectModels(providerCfg) {
             }
 
             const data = parseJsonBody(result.body, '模型列表响应')
-            const models = normalizeDetectedModels(data, isOllama)
+            const models = promotePreferredDefaultModel(normalizeDetectedModels(data, isOllama))
 
             if (models.length === 0) {
                 failures.push({ status: result.status, message: '服务响应正常但未载入任何模型' })
@@ -1328,8 +1435,8 @@ function buildOpenAiRequestBody(model, messages, { temperature, maxTokens, jsonM
         model,
         messages,
         temperature,
-        max_tokens: maxTokens,
     }
+    if (Number(maxTokens) > 0) reqBody.max_tokens = maxTokens
 
     const localIds = ['ollama', 'lmstudio', 'vllm', 'custom']
     const skipJsonFormat = !jsonMode || isGemini || localIds.includes(providerId) || !apiKey
@@ -1349,6 +1456,119 @@ function buildOpenAiRequestBody(model, messages, { temperature, maxTokens, jsonM
     return reqBody
 }
 
+function toResponsesContent(content) {
+    if (typeof content === 'string') return content
+    if (!Array.isArray(content)) return String(content || '')
+
+    const parts = []
+    for (const part of content) {
+        if (!part) continue
+        if (typeof part === 'string') {
+            parts.push({ type: 'input_text', text: part })
+            continue
+        }
+        if (part.type === 'text') {
+            parts.push({ type: 'input_text', text: part.text || '' })
+            continue
+        }
+        if (part.type === 'image_url') {
+            const imageUrl = part.image_url?.url || part.url || ''
+            if (imageUrl) parts.push({ type: 'input_image', image_url: imageUrl })
+        }
+    }
+    return parts.length ? parts : ''
+}
+
+function buildOpenAiResponsesRequestBody(model, messages, { temperature, maxTokens, jsonMode, providerId, apiKey, deepThinking }) {
+    const input = (messages || [])
+        .filter(msg => ['system', 'developer', 'user', 'assistant'].includes(msg.role))
+        .map(msg => ({
+            role: msg.role,
+            content: toResponsesContent(msg.content),
+        }))
+
+    const reqBody = {
+        model,
+        input,
+    }
+    if (Number(maxTokens) > 0) reqBody.max_output_tokens = Math.max(16, maxTokens)
+
+    if (temperature !== undefined && temperature !== null) reqBody.temperature = temperature
+
+    const localIds = ['ollama', 'lmstudio', 'vllm', 'custom']
+    const skipJsonFormat = !jsonMode || localIds.includes(providerId) || !apiKey
+    if (!skipJsonFormat) {
+        reqBody.text = { format: { type: 'json_object' } }
+    }
+
+    if (deepThinking) {
+        reqBody.reasoning = { effort: 'high' }
+    }
+
+    return reqBody
+}
+
+function getResponsesText(data) {
+    if (typeof data?.output_text === 'string') return data.output_text
+    if (typeof data?.text === 'string') return data.text
+    if (typeof data?.response === 'string') return data.response
+    if (typeof data?.result === 'string') return data.result
+    if (typeof data?.message?.content === 'string') return data.message.content
+    if (Array.isArray(data?.choices)) {
+        const choice = data.choices[0] || {}
+        const msg = choice.message || {}
+        if (typeof msg.content === 'string') return msg.content
+        if (typeof choice.text === 'string') return choice.text
+    }
+    const chunks = []
+    if (Array.isArray(data?.content)) {
+        for (const part of data.content) {
+            if (typeof part === 'string') chunks.push(part)
+            if (part?.text) chunks.push(part.text)
+            if (part?.content) chunks.push(part.content)
+        }
+    }
+    for (const item of data?.output || []) {
+        if (typeof item === 'string') {
+            chunks.push(item)
+            continue
+        }
+        if (item?.text) chunks.push(item.text)
+        if (item?.content && typeof item.content === 'string') chunks.push(item.content)
+        if (item?.type !== 'message' || !Array.isArray(item.content)) continue
+        for (const part of item.content) {
+            if (typeof part === 'string') chunks.push(part)
+            if (part?.type === 'output_text' && part.text) chunks.push(part.text)
+            if (part?.type === 'text' && part.text) chunks.push(part.text)
+            if (part?.type === 'refusal' && part.refusal) chunks.push(part.refusal)
+            if (part?.content) chunks.push(part.content)
+        }
+    }
+    return chunks.join('\n')
+}
+
+function shouldTryOpenAiResponsesFallback(message, { model, providerId, isGemini }) {
+    if (isGemini || ['ollama', 'lmstudio', 'vllm'].includes(providerId)) return false
+    const modelId = String(model || '').toLowerCase()
+    if (!/(^|[/_-])(gpt-5|o[1-9]|codex)/.test(modelId)) return false
+    const text = String(message || '').toLowerCase()
+    return isModelUnsupportedError(text)
+        || /responses?\s*api|use\s+responses|not\s+compatible.*chat|chat.*not.*supported|max_tokens.*not.*compatible/.test(text)
+}
+
+function shouldTryAnthropicMessagesFallback(message, { model, providerId, isGemini }) {
+    if (isGemini || ['ollama', 'lmstudio', 'vllm'].includes(providerId)) return false
+    if (!/^claude-/i.test(String(model || ''))) return false
+    const text = String(message || '').toLowerCase()
+    return isModelUnsupportedError(text)
+        || /messages?\s*api|anthropic|not\s+compatible.*chat|chat.*not.*supported/.test(text)
+}
+
+function isAnthropicOneMillionContextError(message) {
+    const text = String(message || '').toLowerCase()
+    return /(1m|1\s*m|100w|100万|百万|million).*(context|上下文)|启用.*(1m|100w|100万|百万|million)/.test(text)
+}
+
 function getAnthropicTextAndThinking(data) {
     const blocks = Array.isArray(data.content) ? data.content : []
     const text = []
@@ -1363,6 +1583,115 @@ function getAnthropicTextAndThinking(data) {
     return { content: text.join('\n'), thinking: thinking.join('\n') || null }
 }
 
+async function callOpenAiResponsesFallback({ base, apiKey, model, providerId, clientId, messages, maxTokens, temperature, jsonMode, deepThinking, signal }) {
+    const url = `${base}/responses`
+    const reqBody = buildOpenAiResponsesRequestBody(model, messages, {
+        temperature,
+        maxTokens,
+        jsonMode,
+        providerId,
+        apiKey,
+        deepThinking,
+    })
+
+    const invokePromise = invoke('llm_request', {
+        req: {
+            url,
+            apiKey,
+            body: JSON.stringify(reqBody),
+            isGemini: false,
+            isAnthropic: false,
+            clientId: clientId || '',
+        },
+    })
+
+    const result = signal
+        ? await Promise.race([
+            invokePromise,
+            new Promise((_, reject) => {
+                signal.addEventListener('abort', () => reject(new DOMException('操作已取消', 'AbortError')), { once: true })
+            }),
+        ])
+        : await invokePromise
+
+    if (!result.success) {
+        throw new Error(parseHttpErrorMessage(result) || `Responses API 错误 (${result.status})`)
+    }
+    if (!result.body || result.body.trim() === '') {
+        throw new Error('Responses API 返回空响应')
+    }
+
+    const data = parseJsonBody(result.body, 'Responses API 响应')
+    const content = getResponsesText(data)
+    if (!content) throw new Error('Responses API 返回空结果')
+
+    const promptTokens = data.usage?.input_tokens ?? data.usage?.prompt_tokens ?? 0
+    const completionTokens = data.usage?.output_tokens ?? data.usage?.completion_tokens ?? 0
+    const totalTokens = data.usage?.total_tokens ?? (promptTokens + completionTokens)
+
+    return {
+        content,
+        thinking: null,
+        usage: { promptTokens, completionTokens, totalTokens },
+        model: data.model || model,
+    }
+}
+
+async function callAnthropicMessagesFallback({ base, apiKey, model, clientId, messages, maxTokens, signal }) {
+    const url = `${base}/messages`
+    const reqBody = buildAnthropicRequestBody(model, messages, { maxTokens: maxTokens || 8192 })
+    const send = async (anthropicBeta = '') => {
+        const invokePromise = invoke('llm_request', {
+            req: {
+                url,
+                apiKey,
+                body: JSON.stringify(reqBody),
+                isGemini: false,
+                isAnthropic: true,
+                anthropicBeta,
+                clientId: clientId || '',
+            },
+        })
+        return signal
+            ? Promise.race([
+                invokePromise,
+                new Promise((_, reject) => {
+                    signal.addEventListener('abort', () => reject(new DOMException('操作已取消', 'AbortError')), { once: true })
+                }),
+            ])
+            : invokePromise
+    }
+
+    let result = await send()
+    if (!result.success) {
+        const message = parseHttpErrorMessage(result) || `Anthropic Messages API 错误 (${result.status})`
+        if (isAnthropicOneMillionContextError(message)) {
+            result = await send('context-1m-2025-08-07')
+        }
+        if (!result.success) {
+            throw new Error(parseHttpErrorMessage(result) || message)
+        }
+    }
+    if (!result.body || result.body.trim() === '') {
+        throw new Error('Anthropic Messages API 返回空响应')
+    }
+
+    const data = parseJsonBody(result.body, 'Anthropic Messages API 响应')
+    const parsed = getAnthropicTextAndThinking(data)
+    if (!parsed.content) throw new Error('Anthropic Messages API 返回空结果')
+
+    const promptTokens = data.usage?.input_tokens ?? data.usage?.prompt_tokens ?? 0
+    const completionTokens = data.usage?.output_tokens ?? data.usage?.completion_tokens ?? 0
+    const totalTokens = data.usage?.total_tokens ?? (promptTokens + completionTokens)
+
+    return {
+        content: parsed.content,
+        thinking: parsed.thinking,
+        usage: { promptTokens, completionTokens, totalTokens },
+        model: data.model || model,
+    }
+}
+
 /**
  * 调用 LLM chat completions API
  * 通过 Rust 后端 invoke 发起请求，绕过前端 fetch 的 header 限制
@@ -1372,11 +1701,11 @@ function getAnthropicTextAndThinking(data) {
  *   - returnMeta=true 时返回 { content, usage, model }，否则只返回 content 字符串（保持兼容）
  *   - jsonMode=false 时强制不发送 response_format（用于纯文本输出场景）
  */
-export async function callLlm(config, messages, options = {}) {
+async function callSingleLlm(config, messages, options = {}) {
     let { baseUrl, apiKey, model, providerId, clientId } = config
     const {
         temperature = 0.3,
-        maxTokens = 4096,
+        maxTokens,
         signal,
         returnMeta = false,
         jsonMode = true,
@@ -1399,7 +1728,7 @@ export async function callLlm(config, messages, options = {}) {
     const url = isAnthropic ? `${base}/messages` : `${base}/chat/completions`
 
     const reqBody = isAnthropic
-        ? buildAnthropicRequestBody(model, messages, { maxTokens })
+        ? buildAnthropicRequestBody(model, messages, { maxTokens: maxTokens || config.maxOutputTokens || 8192 })
         : buildOpenAiRequestBody(model, messages, {
             temperature,
             maxTokens,
@@ -1412,11 +1741,12 @@ export async function callLlm(config, messages, options = {}) {
 
     let result
     let lastErr
+    let anthropicBeta = ''
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         if (signal?.aborted) throw new DOMException('操作已取消', 'AbortError')
 
         const invokePromise = invoke('llm_request', {
-            req: { url, apiKey, body: JSON.stringify(reqBody), isGemini, isAnthropic, clientId: clientId || '' },
+            req: { url, apiKey, body: JSON.stringify(reqBody), isGemini, isAnthropic, anthropicBeta, clientId: clientId || '' },
         })
 
         try {
@@ -1444,12 +1774,57 @@ export async function callLlm(config, messages, options = {}) {
         if (isContextLimitError(result.body, result.status)) {
             throw new Error(friendlyContextLimitMessage(result.body))
         }
+        const message = parseHttpErrorMessage(result) || `LLM API 错误 (${result.status})`
+        if (isAnthropic && !anthropicBeta && isAnthropicOneMillionContextError(message)) {
+            anthropicBeta = 'context-1m-2025-08-07'
+            continue
+        }
         // 可重试的错误
         if (RETRY_STATUS.has(result.status) && attempt < MAX_RETRIES) {
             await sleep(RETRY_BACKOFF_MS[attempt], signal)
             continue
         }
-        throw new Error(parseHttpErrorMessage(result) || `LLM API 错误 (${result.status})`)
+        if (!isAnthropic && shouldTryAnthropicMessagesFallback(message, { model, providerId, isGemini })) {
+            try {
+                const fallback = await callAnthropicMessagesFallback({
+                    base,
+                    apiKey,
+                    model,
+                    clientId,
+                    messages,
+                    maxTokens: maxTokens || config.maxOutputTokens,
+                    signal,
+                })
+                return returnMeta ? fallback : fallback.content
+            } catch (fallbackErr) {
+                const fallbackMessage = fallbackErr?.message || String(fallbackErr)
+                throw new Error(`${friendlyModelUnsupportedMessage(message, { model, providerId, baseUrl: base, isAnthropic })} 已尝试 Anthropic Messages API 兼容调用但仍失败：${fallbackMessage}`)
+            }
+        }
+        if (!isAnthropic && shouldTryOpenAiResponsesFallback(message, { model, providerId, isGemini })) {
+            try {
+                const fallback = await callOpenAiResponsesFallback({
+                    base,
+                    apiKey,
+                    model,
+                    providerId,
+                    clientId,
+                    messages,
+                    maxTokens,
+                    temperature,
+                    jsonMode,
+                    deepThinking,
+                    signal,
+                })
+                return returnMeta ? fallback : fallback.content
+            } catch (fallbackErr) {
+                const fallbackMessage = fallbackErr?.message || String(fallbackErr)
+                throw new Error(`${friendlyModelUnsupportedMessage(message, { model, providerId, baseUrl: base, isAnthropic })} 已尝试 Responses API 兼容调用但仍失败：${fallbackMessage}`)
+            }
+        }
+        throw new Error(isModelUnsupportedError(message)
+            ? friendlyModelUnsupportedMessage(message, { model, providerId, baseUrl: base, isAnthropic })
+            : message)
     }
 
     if (!result.body || result.body.trim() === '') {
@@ -1528,6 +1903,36 @@ export async function callLlm(config, messages, options = {}) {
         }
     }
     return content
+}
+
+export async function callLlm(config, messages, options = {}) {
+    const candidates = [
+        config,
+        ...((config?.fallbackModels || []).map(model => ({ ...config, model, fallbackModels: [] }))),
+    ]
+    let lastErr = null
+    const tried = []
+
+    for (let i = 0; i < candidates.length; i++) {
+        const candidate = candidates[i]
+        tried.push(candidate.model)
+        try {
+            const result = await callSingleLlm(candidate, messages, options)
+            if (i > 0 && options.returnMeta && result && typeof result === 'object') {
+                result.fallbackFrom = config.model
+                result.triedModels = tried
+            }
+            return result
+        } catch (e) {
+            lastErr = e
+            if (options.signal?.aborted || e?.name === 'AbortError') throw e
+            const message = e?.message || String(e)
+            if (!isModelTemporarilyUnavailableError(message) || i >= candidates.length - 1) break
+            console.warn(`模型 ${candidate.model} 暂不可用，自动尝试备用模型 ${candidates[i + 1].model}:`, message)
+        }
+    }
+
+    throw lastErr
 }
 
 function sleep(ms, signal) {

@@ -12,7 +12,7 @@ export function getPptPresets() {
   return [
     {
       id: 'ppt-auto', name: '智能编排（推荐）', mode: 'ai', styleId: 'auto',
-      description: '脱离固定模板，由 AI 按内容与页数自动挑版式、配节奏、选风格',
+      description: '由 AI 先设计主题概念，再按内容与页数自动挑版式、配节奏、选风格',
     },
     {
       id: 'ppt-tech', name: '科技产品 · 深色', mode: 'ai', styleId: 'tech-dark',

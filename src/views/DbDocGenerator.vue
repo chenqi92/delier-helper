@@ -518,6 +518,7 @@ import {
 } from '../core/db-doc/db-doc-renderer.js'
 import { loadProviderConfigs, loadActiveSelection, fillDbDocPlaceholders, createAiController, getResolvedConfig } from '../core/llm/llm-service.js'
 import { saveDbConnection, getDbConnections, getSetting, setSetting } from '../core/db.js'
+import { dbArtifact, modelSnapshot, saveHistoryRecord } from '../core/generation-history.js'
 import GuideTour from '../components/GuideTour.vue'
 import {
   Database, Check, FileDown, FileText, ChevronRight, Filter, Settings,
@@ -884,6 +885,25 @@ export default {
 
           const colCount = result.schema.columns.length
           const fkCount = result.schema.foreign_keys.length
+          await saveHistoryRecord({
+            type: 'db-doc',
+            title: `${this.config.database || this.config.host} 数据库文档`,
+            summary: `${result.schema.tables.length} 个表，${colCount} 个字段，${fkCount} 个外键`,
+            source: {
+              connection: this.config,
+              dbVersion: this.dbVersion,
+            },
+            settings: {
+              selectedTables: this.selectedTables,
+              exportOptions: this.exportOptions,
+            },
+            result: {
+              tableCount: result.schema.tables.length,
+              columnCount: colCount,
+              foreignKeyCount: fkCount,
+            },
+            artifact: dbArtifact(result.schema, this.exportOptions, this.commentOverrides),
+          })
           this.showToast(`获取成功: ${result.schema.tables.length} 个表, ${colCount} 个字段, ${fkCount} 个外键`, 'success')
         } else {
           this.connStatus = 'error'
@@ -1451,6 +1471,29 @@ export default {
         } else {
           this.commentOverrides = result.newOverrides
           this.showToast(`AI 补充完成: ${result.filled}/${result.total} 个注释已填充`, 'success')
+          await saveHistoryRecord({
+            type: 'db-doc',
+            title: `${this.config.database || this.config.host} 数据库文档（AI 补充）`,
+            summary: `${this.filteredTables.length} 个表，补充 ${result.filled}/${result.total} 个注释`,
+            providerId: provider.id,
+            modelId: config.model,
+            source: {
+              connection: this.config,
+              dbVersion: this.dbVersion,
+            },
+            settings: {
+              model: modelSnapshot(provider, this.selectedModelId, config),
+              selectedTables: this.selectedTables,
+              exportOptions: this.exportOptions,
+            },
+            result: {
+              filled: result.filled,
+              total: result.total,
+              tableCount: this.filteredTables.length,
+              columnCount: this.filteredColumns.length,
+            },
+            artifact: dbArtifact(this.schema, this.exportOptions, this.commentOverrides),
+          })
         }
       } catch (e) {
         if (e?.name === 'AbortError' || controller.cancelled) {

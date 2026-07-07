@@ -311,6 +311,7 @@ import {
   ChevronDown, Shuffle
 } from 'lucide-vue-next'
 import { savePageConfig, loadPageConfig, getSetting, setSetting, saveRecentProject, getRecentProjects } from '../core/db.js'
+import { saveHistoryRecord } from '../core/generation-history.js'
 
 const NON_CODE_EXTS = ['.json','.yaml','.yml','.toml','.ini','.cfg','.conf','.md','.txt','.csv','.log','.xml','.svg']
 const BATCH_SIZE = 50
@@ -710,6 +711,40 @@ export default {
           totalPages: genResult.totalPages,
           totalLines: genResult.totalLines,
         }
+
+        await saveHistoryRecord({
+          type: 'copyright',
+          title: `${this.config.softwareName || '未命名软件'} 软著代码`,
+          summary: `${genResult.totalPages} 页，${this.fmt(genResult.totalLines)} 行，${this.config.directories.length} 个目录`,
+          source: {
+            directories: this.config.directories,
+            selectedExtensions: this.config.selectedExtensions,
+            fileTypes: this.fileTypes,
+          },
+          settings: {
+            softwareName: this.config.softwareName,
+            version: this.config.version,
+            linesPerPage: this.config.linesPerPage,
+            maxPages: this.config.maxPages,
+            fontName: this.config.fontName,
+            fontSize: this.config.fontSize,
+            customIgnorePatterns: this.config.customIgnorePatterns,
+            useGitignore: this.config.useGitignore,
+            cleanOptions: this.config.cleanOptions,
+            seed: this.currentSeed,
+          },
+          result: {
+            outputPath,
+            totalPages: genResult.totalPages,
+            totalLines: genResult.totalLines,
+            isTruncated: allocResult.isTruncated,
+            dirAllocations: allocResult.dirAllocations,
+          },
+          artifact: {
+            kind: 'copyright',
+            lines: allocResult.lines,
+          },
+        })
 
         this.progress = 100
         this.processing = false

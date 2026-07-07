@@ -128,7 +128,7 @@
           </div>
 
           <!-- 模型管理 -->
-          <div class="card">
+          <div class="card ai-model-card">
             <div class="card-header">
               <h3><Layers :size="14" /> 可用模型</h3>
               <div style="display:flex;gap:6px;">
@@ -151,7 +151,8 @@
                 {{ detectResult.message }}
               </span>
             </div>
-            <div class="card-body" style="padding:0;">
+            <div class="card-body ai-model-table-body">
+              <div class="ai-model-table-wrap">
               <table class="ai-model-table">
                 <thead>
                   <tr>
@@ -195,9 +196,10 @@
                       <input
                         type="number"
                         class="inline-number-input"
-                        :value="m.maxOutputTokens || 16384"
+                        :value="m.maxOutputTokens || ''"
+                        placeholder="未知"
                         @change="onMaxOutputTokensChange(idx, $event)"
-                        title="模型单次最大输出 Token 数"
+                        title="模型 API 返回的单次最大输出 Token 数；空值表示接口未提供真实数据"
                       />
                     </td>
                     <td>
@@ -222,12 +224,13 @@
                     </td>
                   </tr>
                   <tr v-if="form.models.length === 0">
-                    <td colspan="5" style="text-align:center;padding:16px;color:var(--text-muted);font-size:12px;">
+                    <td colspan="7" style="text-align:center;padding:16px;color:var(--text-muted);font-size:12px;">
                       暂无模型，请添加自定义模型
                     </td>
                   </tr>
                 </tbody>
               </table>
+              </div>
             </div>
           </div>
 
@@ -327,7 +330,7 @@
           </div>
 
         <!-- 未选择任何配置时的空状态 -->
-        <div v-else class="ai-edit-area ai-empty-state">
+        <div v-if="!form" class="ai-edit-area ai-empty-state">
           <Bot :size="48" style="color:var(--text-muted);" />
           <p>选择左侧已有厂商进行编辑，或点击「新增厂商」</p>
         </div>
@@ -344,7 +347,7 @@ import {
 import {
   LLM_PROVIDERS, upsertProviderConfig,
   deleteProviderConfig, testLlmConnection, getDefaultModels,
-  getResolvedConfig, nextId, detectModels
+  getResolvedConfig, nextId, detectModels, saveActiveSelection
 } from '../core/llm/llm-service.js'
 import { refreshProviderConfigs } from '../core/global-store.js'
 
@@ -364,9 +367,9 @@ export default {
       detectResult: null,
       saved: false,
       showAddModel: false,
-      newModel: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: 16384 },
+      newModel: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: null },
       editingModelIdx: null,
-      editModelForm: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: 16384 },
+      editModelForm: { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: null },
       // 拖拽排序状态
       providerDragIdx: -1,
       providerDragOver: -1,
@@ -418,14 +421,15 @@ export default {
 
     addNewProvider() {
       const defaultPreset = this.providerPresets[1] // DeepSeek
+      const defaultModels = getDefaultModels(defaultPreset.id)
       const newCfg = {
         id: nextId(),
         providerId: defaultPreset.id,
         label: defaultPreset.label,
         baseUrl: defaultPreset.baseUrl,
         apiKey: '',
-        models: getDefaultModels(defaultPreset.id),
-        activeModelId: defaultPreset.models[0]?.id || '',
+        models: defaultModels,
+        activeModelId: defaultModels[0]?.id || '',
       }
       this.editingId = newCfg.id
       this.form = JSON.parse(JSON.stringify(newCfg))
@@ -444,8 +448,9 @@ export default {
           this.form.apiKey = ''
           this.form.activeModelId = ''
         } else if (preset.id !== 'custom') {
-          this.form.models = getDefaultModels(preset.id)
-          this.form.activeModelId = preset.models[0]?.id || ''
+          const defaultModels = getDefaultModels(preset.id)
+          this.form.models = defaultModels
+          this.form.activeModelId = defaultModels[0]?.id || ''
         }
       }
       this.testResult = null
@@ -471,10 +476,10 @@ export default {
           longContext: this.newModel.longContext,
         },
         contextLength: (this.newModel.contextLengthK || 32) * 1024,
-        maxOutputTokens: this.newModel.maxOutputTokens || 16384,
+        ...(this.newModel.maxOutputTokens ? { maxOutputTokens: this.newModel.maxOutputTokens } : {}),
         custom: true,
       })
-      this.newModel = { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: 16384 }
+      this.newModel = { id: '', label: '', multimodal: false, deepThinking: false, codeGen: false, webSearch: false, functionCall: false, longContext: false, contextLengthK: 32, maxOutputTokens: null }
       this.showAddModel = false
     },
 
@@ -491,14 +496,14 @@ export default {
         functionCall: !!m.capabilities?.functionCall,
         longContext: !!m.capabilities?.longContext,
         contextLengthK: Math.round((m.contextLength || 32768) / 1024),
-        maxOutputTokens: m.maxOutputTokens || 16384,
+        maxOutputTokens: m.maxOutputTokens || null,
       }
     },
     saveEditModel() {
       const idx = this.editingModelIdx
       if (idx === null || idx < 0 || idx >= this.form.models.length) return
       const f = this.editModelForm
-      this.form.models[idx] = {
+      const updated = {
         ...this.form.models[idx],
         label: f.label || f.id,
         capabilities: {
@@ -510,8 +515,10 @@ export default {
           longContext: f.longContext,
         },
         contextLength: (f.contextLengthK || 32) * 1024,
-        maxOutputTokens: f.maxOutputTokens || 16384,
       }
+      if (f.maxOutputTokens) updated.maxOutputTokens = f.maxOutputTokens
+      else delete updated.maxOutputTokens
+      this.form.models[idx] = updated
       this.editingModelIdx = null
     },
 
@@ -557,6 +564,13 @@ export default {
           }
           this.form.models = result.models
           this.form.activeModelId = result.models[0].id
+          await this.save(true)
+          await saveActiveSelection(this.form.id, this.form.activeModelId)
+          this.globalStore.activeProviderId = this.form.id
+          this.globalStore.activeModelId = this.form.activeModelId
+          this.detectResult = { ...result, message: `${result.message}，已自动保存` }
+          this.saved = true
+          setTimeout(() => { this.saved = false }, 3000)
         }
       } catch (e) {
         this.detectResult = { success: false, message: String(e) }
@@ -648,8 +662,14 @@ export default {
       await this.save(true)
     },
     onMaxOutputTokensChange(idx, event) {
-      const val = parseInt(event.target.value)
-      this.form.models[idx].maxOutputTokens = val > 0 ? val : 16384
+      const raw = String(event.target.value || '').trim()
+      const val = parseInt(raw, 10)
+      if (raw && val > 0) {
+        this.form.models[idx].maxOutputTokens = val
+      } else {
+        delete this.form.models[idx].maxOutputTokens
+        event.target.value = ''
+      }
     },
   },
 }
@@ -657,14 +677,18 @@ export default {
 
 <style scoped>
 .ai-edit-area {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(220px, 1fr);
   gap: 16px;
   padding: 4px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .ai-empty-state {
   display: flex;
+  grid-template-rows: none;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -803,6 +827,30 @@ export default {
 }
 
 /* 模型表格 */
+.content-panel {
+  overflow: hidden;
+}
+.ai-model-card {
+  flex: 1;
+  min-height: 240px;
+  display: flex;
+  flex-direction: column;
+}
+.ai-model-card .card-header,
+.ai-model-card > .tip,
+.ai-model-card > div[style*="padding:8px"] {
+  flex-shrink: 0;
+}
+.ai-model-table-body {
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.ai-model-table-wrap {
+  height: 100%;
+  overflow: auto;
+}
 .ai-model-table {
   width: 100%;
   border-collapse: collapse;
@@ -816,6 +864,9 @@ export default {
   background: var(--bg-elevated);
   border-bottom: 1px solid var(--border-color);
   font-size: 11px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
 }
 .ai-model-table td {
   padding: 6px 12px;

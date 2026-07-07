@@ -195,6 +195,7 @@ const SECTION_TEMPERATURE = { diagram: 0.1, table: 0.35, text: 0.55 }
 import { getResolvedConfig, callLlm } from '../core/llm/llm-service.js'
 import { savePageConfig, loadPageConfig, getSetting, setSetting } from '../core/db.js'
 import { parseTestExcel, sheetsToMarkdown, getBasicStats } from '../core/doc-template/test-excel-parser.js'
+import { excelSourceSnapshot, modelSnapshot, saveHistoryRecord, sectionsArtifact } from '../core/generation-history.js'
 import SectionEditor from '../components/SectionEditor.vue'
 import TemplateSelector from '../components/TemplateSelector.vue'
 import ReferenceFiles from '../components/ReferenceFiles.vue'
@@ -411,7 +412,32 @@ export default {
           controller,
         )
         if (controller.cancelled) this.showToast('已停止生成', 'info')
-        else this.showToast('测试记录生成完成！', 'success')
+        else {
+          const generatedCount = getEnabledLeafSections(this.sections).filter(s => s.content || s.mermaidCode || s.imageData).length
+          await saveHistoryRecord({
+            type: 'tr-doc',
+            title: `${this.docInfo.projectName || '系统'} 测试记录`,
+            summary: `${generatedCount} 个章节已生成，Excel ${this.excelStats.totalRows || 0} 行`,
+            providerId: provider.id,
+            modelId: config.model,
+            source: {
+              excel: excelSourceSnapshot(this.excelData),
+              referenceFiles: this.referenceFiles.map(f => ({ name: f.name || f.path || '参考文件', type: f.type || '', size: f.size || 0 })),
+            },
+            settings: {
+              docInfo: this.docInfo,
+              model: modelSnapshot(provider, this.selectedModelId, config),
+              enabledSections: getEnabledLeafSections(this.sections).map(s => ({ number: s.number, title: s.title, type: s.type })),
+            },
+            result: {
+              generatedSections: generatedCount,
+              totalSections: getEnabledLeafSections(this.sections).length,
+              excelStats: this.excelStats,
+            },
+            artifact: sectionsArtifact(this.sections, this.docInfo),
+          })
+          this.showToast('测试记录生成完成！', 'success')
+        }
       } catch (e) {
         if (e?.name === 'AbortError' || controller.cancelled) this.showToast('已停止生成', 'info')
         else this.showToast('生成失败: ' + String(e), 'error')

@@ -200,6 +200,7 @@ pub struct LlmRequest {
     pub body: String,
     pub is_gemini: bool,
     pub is_anthropic: Option<bool>,
+    pub anthropic_beta: Option<String>,
     pub client_id: Option<String>,
 }
 
@@ -263,6 +264,13 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
     if req.is_gemini {
         builder = builder.header("x-goog-api-key", req.api_key.clone());
     }
+    if is_anthropic {
+        if let Some(anthropic_beta) = req.anthropic_beta.as_ref() {
+            if !anthropic_beta.is_empty() {
+                builder = builder.header("anthropic-beta", anthropic_beta);
+            }
+        }
+    }
     if let Some(client_id) = req.client_id.as_ref() {
         if !client_id.is_empty() {
             builder = builder.header("X-Client-Id", client_id);
@@ -304,6 +312,7 @@ pub struct LlmGetRequest {
     pub url: String,
     pub api_key: String,
     pub is_anthropic: Option<bool>,
+    pub anthropic_beta: Option<String>,
     pub client_id: Option<String>,
 }
 
@@ -334,6 +343,13 @@ pub async fn llm_get_request(req: LlmGetRequest) -> LlmResponse {
                 .header("anthropic-version", "2023-06-01");
         } else {
             builder = builder.header("Authorization", format!("Bearer {}", req.api_key));
+        }
+    }
+    if is_anthropic {
+        if let Some(anthropic_beta) = req.anthropic_beta.as_ref() {
+            if !anthropic_beta.is_empty() {
+                builder = builder.header("anthropic-beta", anthropic_beta);
+            }
         }
     }
     if let Some(client_id) = req.client_id.as_ref() {

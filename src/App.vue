@@ -1,5 +1,5 @@
 <template>
-  <div class="app-container" :class="{ 'light-theme': theme === 'light' }" style="height:100vh;display:flex;">
+  <div class="app-container" :class="{ 'light-theme': theme === 'light' }">
     <!-- Toast -->
     <div v-if="toast.show" :class="['message-toast', toast.type]">{{ toast.message }}</div>
 
@@ -19,6 +19,14 @@
       </div>
       <div class="left-nav-bottom">
         <button
+          :class="['left-nav-item', { active: activeTab === 'ai-settings' }]"
+          @click="activeTab = 'ai-settings'"
+          title="AI 设置"
+        >
+          <Bot :size="18" />
+          <span class="left-nav-label">AI 设置</span>
+        </button>
+        <button
           :class="['left-nav-item', { active: guide.enabled }]"
           @click="toggleGuide"
           :title="guide.enabled ? '关闭引导' : '开启引导'"
@@ -36,10 +44,10 @@
     </nav>
 
     <!-- 右侧主区域 -->
-    <div style="flex:1;display:flex;flex-direction:column;overflow:hidden;">
+    <div class="app-main-shell">
       <!-- 主体 + 右侧栏 -->
-      <div style="flex:1;display:flex;overflow:hidden;">
-        <div style="flex:1;overflow:auto;">
+      <div class="app-workspace">
+        <div class="app-view-host">
           <keep-alive>
             <component :is="currentView" :key="activeTab" style="height:100%;" />
           </keep-alive>
@@ -54,7 +62,7 @@
 </template>
 
 <script>
-import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList, Presentation } from 'lucide-vue-next'
+import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList, Presentation, History } from 'lucide-vue-next'
 import { markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
 import CloudAccount from './components/CloudAccount.vue'
@@ -69,11 +77,12 @@ import TestCaseGenerator from './views/TestCaseGenerator.vue'
 import TestRecordGenerator from './views/TestRecordGenerator.vue'
 import PptGenerator from './views/PptGenerator.vue'
 import AiSettings from './views/AiSettings.vue'
+import HistoryView from './views/HistoryView.vue'
 import { globalStore, initStore } from './core/global-store.js'
 
 export default {
   name: 'App',
-  components: { AiSidebar, CloudAccount, UpdateChecker, Sun, Moon, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, PptGenerator, AiSettings, Server, ClipboardCheck, ClipboardList },
+  components: { AiSidebar, CloudAccount, UpdateChecker, Sun, Moon, Bot, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, PptGenerator, AiSettings, HistoryView, Server, ClipboardCheck, ClipboardList },
   provide() {
     return {
       showToast: this.showToast,
@@ -100,7 +109,7 @@ export default {
         { id: 'tc-doc',    label: '测试用例', icon: markRaw(ClipboardCheck) },
         { id: 'tr-doc',    label: '测试记录', icon: markRaw(ClipboardList) },
         { id: 'ppt',       label: 'PPT', icon: markRaw(Presentation) },
-        { id: 'ai-settings', label: 'AI 设置', icon: markRaw(Bot) },
+        { id: 'history',   label: '历史记录', icon: markRaw(History) },
       ],
       viewMap: {
         'copyright': 'CopyrightGenerator',
@@ -112,6 +121,7 @@ export default {
         'tc-doc': 'TestCaseGenerator',
         'tr-doc': 'TestRecordGenerator',
         'ppt': 'PptGenerator',
+        'history': 'HistoryView',
         'ai-settings': 'AiSettings',
       },
     }
