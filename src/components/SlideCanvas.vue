@@ -67,9 +67,10 @@
 
 <script>
 import { SLIDE_W, SLIDE_H, clamp, rgba } from '../core/ppt/ppt-geometry.js'
-import { textParagraphs } from '../core/ppt/ppt-elements.js'
+import { textParagraphs, resolveShadow } from '../core/ppt/ppt-elements.js'
 import { iconSvg } from '../core/ppt/ppt-icons.js'
 import { chartSvg } from '../core/ppt/ppt-charts.js'
+import { backgroundCss } from '../core/ppt/ppt-background.js'
 
 export default {
   name: 'SlideCanvas',
@@ -94,7 +95,7 @@ export default {
       return {
         width: this.width + 'px',
         height: (this.width * SLIDE_H / SLIDE_W) + 'px',
-        background: '#' + (this.slide.background?.color || 'FFFFFF'),
+        background: backgroundCss(this.slide.background),
       }
     },
   },
@@ -146,8 +147,17 @@ export default {
       }
       if (el.type === 'ellipse') s.borderRadius = '50%'
       else if (el.type === 'roundRect') s.borderRadius = this.px(el.radius || 0) + 'px'
-      if (el.shadow) s.boxShadow = '0 6px 18px rgba(20,30,50,0.18)'
+      if (el.shadow) s.boxShadow = this.boxShadowCss(el.shadow)
       return s
+    },
+    // 柔和层叠阴影：一层贴近的环境光 + 一层扩散投影
+    boxShadowCss(shadow) {
+      const s = resolveShadow(shadow)
+      if (!s) return 'none'
+      const k = this.scale / 72
+      const o1 = Math.max(1, Math.round(s.offset * 0.4 * k)), b1 = Math.max(2, Math.round(s.blur * 0.4 * k))
+      const o2 = Math.max(1, Math.round(s.offset * k)), b2 = Math.max(3, Math.round(s.blur * k))
+      return `0 ${o1}px ${b1}px ${rgba(s.color, s.opacity * 0.7)}, 0 ${o2}px ${b2}px ${rgba(s.color, s.opacity)}`
     },
     lineStyle(el) {
       const w = this.px(Math.abs(el.w)), h = this.px(Math.abs(el.h))
@@ -160,7 +170,7 @@ export default {
     imageStyle(el) {
       const s = { width: '100%', height: '100%', objectFit: el.sizing === 'cover' ? 'cover' : 'contain', display: 'block' }
       if (el.radius) s.borderRadius = this.px(el.radius) + 'px'
-      if (el.frame) { s.boxShadow = '0 8px 22px rgba(20,30,50,0.22)'; s.border = `1px solid #${el.frameColor || '1F2933'}` }
+      if (el.frame) { s.boxShadow = this.boxShadowCss('lg'); s.border = `1px solid #${el.frameColor || '1F2933'}` }
       return s
     },
     chipStyle(el) {

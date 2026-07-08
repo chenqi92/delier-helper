@@ -196,7 +196,52 @@
       <!-- 右侧编辑 / 预览区 -->
       <main class="content-panel" style="padding:0;">
         <!-- 空状态 -->
-        <div v-if="!deck" class="empty-state" style="flex:1;">
+        <div v-if="!deck && generationPreview" class="generation-live-stage">
+          <div class="glow-grid"></div>
+          <div class="gen-live-inner">
+            <div class="gen-live-kicker">
+              <span class="gen-pulse"></span>
+              {{ generationPreview.phase || '正在生成' }}
+            </div>
+            <h2>{{ generationPreview.topic || cfg.topic || '正在提炼汇报主题' }}</h2>
+            <p class="gen-live-summary">{{ generationPreview.summary || 'AI 正在读取代码证据、组织业务主线，并设计页面节奏。' }}</p>
+
+            <div v-if="generationPreview.palette?.length" class="gen-palette-strip" title="AI 生成调色板">
+              <span v-for="c in generationPreview.palette" :key="c" :style="{ background: '#' + c }"></span>
+            </div>
+
+            <div class="gen-live-grid">
+              <section class="gen-live-panel">
+                <div class="gen-panel-label">业务判断</div>
+                <div v-if="generationPreview.capabilities?.length" class="gen-chip-list">
+                  <span v-for="c in generationPreview.capabilities" :key="c">{{ c }}</span>
+                </div>
+                <p v-else>等待业务分析结果...</p>
+              </section>
+              <section class="gen-live-panel">
+                <div class="gen-panel-label">叙事主线</div>
+                <p>{{ generationPreview.narrative || '等待叙事规划...' }}</p>
+              </section>
+            </div>
+
+            <div class="gen-outline-stream">
+              <div
+                v-for="(s, i) in generationPreview.outline"
+                :key="i"
+                :class="['gen-outline-row', { active: generationPreview.activeSlide === i }]"
+              >
+                <span>{{ String(i + 1).padStart(2, '0') }}</span>
+                <strong>{{ s.title || s.layout }}</strong>
+                <em>{{ s.layout }}</em>
+              </div>
+              <div v-if="!generationPreview.outline?.length" class="gen-outline-empty">
+                <span class="spinner"></span> 正在编排页面大纲...
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="!deck" class="empty-state" style="flex:1;">
           <Presentation :size="48" style="opacity:0.3;margin-bottom:16px;" />
           <p>项目 PPT 生成器</p>
           <p class="hint">左侧选模板与风格，主题、受众、方向和页数都可留空；选择目录后点击「AI 生成」会自动扫描并分析。生成后右侧可直接拖拽、缩放、改字、增删元素。</p>
@@ -292,6 +337,36 @@
         </div>
       </div>
     </Teleport>
+
+    <Teleport to=".app-container">
+      <div v-if="templateNameOpen" class="tpl-dialog-mask" @click.self="closeTemplateNameDialog">
+        <form class="tpl-dialog" @submit.prevent="confirmSaveAsTemplate">
+          <div class="tpl-dialog-head">
+            <div>
+              <div class="tpl-dialog-title"><Save :size="16" /> 存为模板</div>
+              <div class="tpl-dialog-sub">命名后会保存到自定义模板库</div>
+            </div>
+            <button class="tg-close" type="button" @click="closeTemplateNameDialog"><X :size="18" /></button>
+          </div>
+          <div class="tpl-dialog-body">
+            <label class="form-label" for="template-name-input">模板名称</label>
+            <input
+              id="template-name-input"
+              ref="templateNameInput"
+              v-model.trim="templateNameDraft"
+              class="form-input"
+              maxlength="60"
+              placeholder="输入模板名称"
+            />
+            <div v-if="templateNameError" class="tpl-dialog-error">{{ templateNameError }}</div>
+            <div class="tpl-dialog-actions">
+              <button class="btn btn-secondary btn-sm" type="button" @click="closeTemplateNameDialog">取消</button>
+              <button class="btn btn-primary btn-sm" type="submit">保存模板</button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -310,9 +385,10 @@ import { generateOutline, generateSlideContent, createAiController } from '../co
 import { generateBusinessBrief, generateStoryline, buildPptBusinessContext, briefDirectionText } from '../core/ppt/ppt-business-analyzer.js'
 import { buildDeckFromOutline, restyleDeck, appendBlankSlide } from '../core/ppt/ppt-deck.js'
 import { buildSlide } from '../core/ppt/ppt-layouts.js'
-import { getStyle, listStyles, pickRandomStyle, DEFAULT_STYLE_ID } from '../core/ppt/ppt-styles.js'
+import { getStyle, listStyles, pickRandomStyle, resolveStyle, DEFAULT_STYLE_ID } from '../core/ppt/ppt-styles.js'
 import { E, cloneElement } from '../core/ppt/ppt-elements.js'
 import { pickInk, SLIDE_W, SLIDE_H } from '../core/ppt/ppt-geometry.js'
+import { backgroundSolid } from '../core/ppt/ppt-background.js'
 import { getPptPresets, toDeckSkeleton } from '../core/ppt/ppt-template-presets.js'
 import { loadCustomPptTemplates, saveCustomPptTemplate, deleteCustomPptTemplate } from '../core/ppt/ppt-template-store.js'
 import { renderDeckToPptx } from '../core/ppt/ppt-pptx-renderer.js'
@@ -335,6 +411,7 @@ export default {
       scanResult: null,
       businessBrief: null,
       storyline: null,
+      generationPreview: null,
       deck: null,
       currentSlideIndex: 0,
       selectedElId: null,
@@ -344,6 +421,9 @@ export default {
       styleOverrideId: '',
       customTemplates: [],
       galleryOpen: false,
+      templateNameOpen: false,
+      templateNameDraft: '',
+      templateNameError: '',
       images: [],
       analyzing: false,
       lastStyleId: null,
@@ -434,6 +514,36 @@ export default {
     window.removeEventListener('keydown', this.onGalleryKey)
   },
   methods: {
+    resetGenerationPreview(phase = '准备生成') {
+      this.generationPreview = {
+        phase,
+        topic: this.cfg.topic || '',
+        summary: '',
+        capabilities: [],
+        narrative: '',
+        outline: [],
+        palette: [],
+        activeSlide: -1,
+      }
+    },
+    updateGenerationPreview(patch = {}) {
+      if (!this.generationPreview) this.resetGenerationPreview()
+      this.generationPreview = { ...this.generationPreview, ...patch }
+    },
+    paletteFromTheme(theme) {
+      const p = theme?.palette || {}
+      return ['primary', 'secondary', 'accent', 'bgDark', 'bgLight', 'cardBg']
+        .map(k => String(p[k] || '').replace(/^#/, '').toUpperCase())
+        .filter(v => /^[0-9A-F]{6}$/.test(v))
+    },
+    briefPreview(brief) {
+      if (!brief) return {}
+      return {
+        topic: brief.topic || this.cfg.topic || '',
+        summary: brief.summary || brief.projectType || '',
+        capabilities: (brief.businessCapabilities || []).slice(0, 6).map(c => c.name).filter(Boolean),
+      }
+    },
     addLog(msg, level = 'info') {
       const now = new Date()
       const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`
@@ -573,20 +683,26 @@ export default {
       if (this.analyzing || this.aiProcessing) return
       const llmConfig = this.resolveLlm()
       if (!llmConfig) return
+      this.resetGenerationPreview(this.scanResult ? '业务分析' : '扫描并分析')
       if (!this.scanResult) {
-        if (this.projectDirs.length === 0) { this.showToast('请先添加项目目录', 'warning'); return }
+        if (this.projectDirs.length === 0) { this.generationPreview = null; this.showToast('请先添加项目目录', 'warning'); return }
+        this.updateGenerationPreview({ phase: '扫描代码库', summary: '正在收集页面、接口、模型、配置和业务线索...' })
         const ok = await this.startScan()
         if (!ok || !this.scanResult) return
       }
       this.analyzing = true
       try {
         const scanContext = this.buildContext()
+        this.updateGenerationPreview({ phase: '业务分析', summary: '正在把代码证据翻译成业务场景、能力和价值...' })
         this.addLog('[进行] 业务分析 Agent：识别用户、流程、能力与价值...')
         const brief = await generateBusinessBrief(llmConfig, scanContext, { ...this.cfg })
         this.businessBrief = brief
+        this.updateGenerationPreview({ phase: '业务分析完成', ...this.briefPreview(brief) })
         this.applyBusinessBriefToCfg(brief, { overwriteDirection: true, applyStyle: false })
+        this.updateGenerationPreview({ phase: '规划叙事', summary: brief.summary || '正在组织汇报主线...' })
         this.addLog('[进行] 叙事规划 Agent：组织业务汇报主线...')
         this.storyline = await generateStoryline(llmConfig, brief, scanContext, { ...this.cfg })
+        this.updateGenerationPreview({ phase: '叙事完成', narrative: this.storyline?.narrative || '' })
         this.showToast(brief.summary ? `已分析：${brief.summary}` : '已生成业务上下文', 'success')
       } catch (e) {
         this.showToast('分析失败: ' + String(e.message || e), 'error')
@@ -637,15 +753,19 @@ export default {
       if (!this.scanResult) return { businessBrief: null, storyline: null }
       if (!this.businessBrief) {
         this.aiProgressText = '业务分析…'
+        this.updateGenerationPreview({ phase: '业务分析', summary: '正在从项目文件中提炼业务定位和核心能力...' })
         this.addLog('[进行] 业务分析 Agent：从代码证据提炼业务上下文...')
         this.businessBrief = await generateBusinessBrief(llmConfig, scanContext, genCfg, opts)
+        this.updateGenerationPreview({ phase: '业务分析完成', ...this.briefPreview(this.businessBrief) })
         this.applyBusinessBriefToCfg(this.businessBrief, { applyStyle: false })
         if (this.businessBrief.summary) this.addLog(`[完成] 业务定位：${this.businessBrief.summary}`, 'success')
       }
       if (!this.storyline) {
         this.aiProgressText = '规划汇报主线…'
+        this.updateGenerationPreview({ phase: '规划叙事', summary: this.businessBrief?.summary || '正在设计汇报主线和节奏...' })
         this.addLog('[进行] 叙事规划 Agent：设计汇报主线...')
         this.storyline = await generateStoryline(llmConfig, this.businessBrief, scanContext, { ...genCfg, ...this.cfg }, opts)
+        this.updateGenerationPreview({ phase: '叙事完成', narrative: this.storyline?.narrative || '' })
         if (this.storyline.narrative) this.addLog(`[完成] 汇报主线：${this.storyline.narrative}`, 'success')
       }
       return { businessBrief: this.businessBrief, storyline: this.storyline }
@@ -683,9 +803,11 @@ export default {
       if (this.aiProcessing) return
       const llmConfig = this.resolveLlm()
       if (!llmConfig) return
+      this.resetGenerationPreview(this.scanResult ? '准备生成' : '扫描代码库')
       if (!this.scanResult && this.projectDirs.length > 0) {
+        this.updateGenerationPreview({ summary: '正在收集代码库上下文，稍后会自动进入业务分析。' })
         const ok = await this.startScan()
-        if (!ok || !this.scanResult) return
+        if (!ok || !this.scanResult) { this.generationPreview = null; return }
       }
 
       const controller = createAiController()
@@ -706,6 +828,10 @@ export default {
 
         // 阶段 A：大纲
         this.aiProgressText = '正在编排大纲…'
+        this.updateGenerationPreview({
+          phase: '编排页面大纲',
+          summary: this.storyline?.narrative || this.businessBrief?.summary || '正在决定每页标题、版式节奏和视觉主题。',
+        })
         this.addLog('[进行] 编排 PPT 大纲...')
         let outline
         if (tpl?.mode === 'fixed' && Array.isArray(tpl.skeleton)) {
@@ -718,6 +844,13 @@ export default {
           outline = await generateOutline(llmConfig, contextSummary, genCfg, this.lastStyleId, { signal: controller.signal })
           outline.styleId = this.resolveStyleId(outline.styleId)
         }
+        this.updateGenerationPreview({
+          phase: '大纲就绪',
+          topic: outline.theme?.name || this.businessBrief?.topic || this.cfg.topic || '',
+          summary: outline.theme?.concept || this.storyline?.narrative || this.businessBrief?.summary || '',
+          outline: (outline.slides || []).map(s => ({ title: s.title, layout: s.layout })),
+          palette: this.paletteFromTheme(outline.theme),
+        })
         if (controller.cancelled) throw new Error('已取消')
 
         this.lastStyleId = outline.styleId
@@ -746,7 +879,8 @@ export default {
         this.currentSlideIndex = 0
         this.selectedElId = null
         this.$nextTick(this.updateSize)
-        this.addLog(`[完成] 大纲就绪：${outline.slides.length} 页 · 风格 ${getStyle(outline.styleId).name}`, 'success')
+        const deckStyle = resolveStyle(this.deck.styleId, this.deck.styleDef)
+        this.addLog(`[完成] 大纲就绪：${outline.slides.length} 页 · 风格 ${deckStyle.name}`, 'success')
 
         // 阶段 B：逐页填充（按 id 回写，防止生成期间结构变化导致错位）
         const prevTitles = []
@@ -757,6 +891,7 @@ export default {
           const o = outline.slides[i]
           const slideId = this.deck.slides[i].id
           this.aiProgressText = `[${i + 1}/${outline.slides.length}] ${o.title || o.layout}`
+          this.updateGenerationPreview({ phase: '逐页填充内容', activeSlide: i })
           this.currentSlideIndex = i
           try {
             const content = await generateSlideContent(llmConfig, o, contextSummary, { ...genCfg, theme: outline.theme }, prevTitles.slice(-12), { signal: controller.signal })
@@ -765,7 +900,7 @@ export default {
             this.assignImages(o.layout, content, imgSrcs, imgPtr)
             const idx = this.deck.slides.findIndex(s => s.id === slideId)
             if (idx < 0) continue
-            const built = buildSlide(o.layout, content, getStyle(this.deck.styleId), idx + 1)
+            const built = buildSlide(o.layout, content, resolveStyle(this.deck.styleId, this.deck.styleDef), idx + 1)
             built.id = slideId
             built.intent = o.intent
             built.pending = false
@@ -786,7 +921,7 @@ export default {
           await saveHistoryRecord({
             type: 'ppt',
             title: `${this.cfg.topic || '未命名项目'} PPT`,
-            summary: `${this.deck?.slides?.length || 0} 页，风格 ${getStyle(this.deck?.styleId)?.name || this.deck?.styleId || '-'}，${this.projectDirs.length} 个目录`,
+            summary: `${this.deck?.slides?.length || 0} 页，风格 ${resolveStyle(this.deck?.styleId, this.deck?.styleDef)?.name || this.deck?.styleId || '-'}，${this.projectDirs.length} 个目录`,
             providerId: provider?.id || '',
             modelId: llmConfig.model,
             source: {
@@ -803,10 +938,11 @@ export default {
             },
             result: {
               slideCount: this.deck?.slides?.length || 0,
-              styleId: this.deck?.styleId || '',
+              styleId: this.deck?.styleDef?.name || this.deck?.styleId || '',
+              styleDef: this.deck?.styleDef || null,
               outline,
             },
-            artifact: pptArtifact(this.deck, genCfg, tpl, this.deck?.styleId || ''),
+            artifact: pptArtifact(this.deck, genCfg, tpl, this.deck?.styleDef?.name || this.deck?.styleId || ''),
           })
           this.showToast('PPT 生成完成！可直接在右侧编辑', 'success')
         }
@@ -850,7 +986,7 @@ export default {
         }
         const idx = this.deck.slides.findIndex(x => x.id === s.id)
         if (idx >= 0) {
-          const built = buildSlide(s.layout, content, getStyle(this.deck.styleId), idx + 1)
+          const built = buildSlide(s.layout, content, resolveStyle(this.deck.styleId, this.deck.styleDef), idx + 1)
           built.id = s.id; built.pending = false; built.intent = s.intent
           this.deck.slides.splice(idx, 1, built)
           this.showToast('本页已重生成', 'success')
@@ -906,8 +1042,8 @@ export default {
       this.currentSlide.elements.push(el)
       this.selectedElId = el.id
     },
-    currentStyle() { return getStyle(this.deck.styleId) },
-    inkForSlide() { return pickInk(this.currentSlide.background?.color || 'FFFFFF') },
+    currentStyle() { return resolveStyle(this.deck.styleId, this.deck.styleDef) },
+    inkForSlide() { return pickInk(backgroundSolid(this.currentSlide.background)) },
     addText() {
       const st = this.currentStyle()
       this.addElement(E.text({ x: 4.4, y: 3.1, w: 4.5, h: 1, text: '双击编辑文字', fontFace: st.fonts.body, fontSize: 18, color: this.inkForSlide(), valign: 'middle' }))
@@ -972,13 +1108,28 @@ export default {
       const next = (this.selectedTemplateIndex + delta + this.allTemplates.length) % this.allTemplates.length
       this.selectedTemplateId = this.allTemplates[next].id
     },
-    async saveAsTemplate() {
+    saveAsTemplate() {
       if (!this.deck) return
-      const name = window.prompt('模板名称', this.cfg.topic ? this.cfg.topic + ' 模板' : '我的 PPT 模板')
-      if (!name) return
+      this.templateNameDraft = this.cfg.topic ? this.cfg.topic + ' 模板' : '我的 PPT 模板'
+      this.templateNameError = ''
+      this.templateNameOpen = true
+      this.$nextTick(() => this.$refs.templateNameInput?.focus?.())
+    },
+    closeTemplateNameDialog() {
+      this.templateNameOpen = false
+      this.templateNameError = ''
+    },
+    async confirmSaveAsTemplate() {
+      if (!this.deck) return
+      const name = this.templateNameDraft.trim()
+      if (!name) {
+        this.templateNameError = '请输入模板名称'
+        return
+      }
       const sk = toDeckSkeleton(this.deck)
-      await saveCustomPptTemplate({ name, description: `${sk.skeleton.length} 页 · ${getStyle(this.deck.styleId).name}`, styleId: this.deck.styleId, mode: 'fixed', skeleton: sk.skeleton })
+      await saveCustomPptTemplate({ name, description: `${sk.skeleton.length} 页 · ${resolveStyle(this.deck.styleId, this.deck.styleDef).name}`, styleId: this.deck.styleId, mode: 'fixed', skeleton: sk.skeleton })
       this.customTemplates = await loadCustomPptTemplates()
+      this.closeTemplateNameDialog()
       this.showToast('已存为模板', 'success')
     },
     async removeTemplate(t) {
@@ -1117,6 +1268,28 @@ export default {
 .tg-hint { font-size: 12px; color: var(--text-secondary); }
 .tg-close { margin-left: auto; background: var(--bg-elevated); border: 1px solid var(--border-color); color: var(--text-secondary); border-radius: var(--radius-sm); padding: 5px; cursor: pointer; display: flex; }
 .tg-close:hover { color: var(--danger-500); border-color: var(--danger-500); }
+.tpl-dialog-mask {
+  position: fixed; inset: 0; z-index: 1100;
+  background: rgba(8, 11, 22, 0.66); backdrop-filter: blur(3px);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.tpl-dialog {
+  width: min(420px, 100%);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 24px 70px rgba(0,0,0,0.45);
+  overflow: hidden;
+}
+.tpl-dialog-head {
+  display: flex; align-items: flex-start; gap: 12px; padding: 16px 18px;
+  border-bottom: 1px solid var(--border-color);
+}
+.tpl-dialog-title { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 700; color: var(--text-primary); }
+.tpl-dialog-sub { margin-top: 4px; font-size: 12px; color: var(--text-secondary); }
+.tpl-dialog-body { padding: 18px; display: grid; gap: 9px; }
+.tpl-dialog-error { color: var(--danger-500); font-size: 12px; line-height: 1.5; }
+.tpl-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 6px; }
 .tpl-gallery-grid {
   flex: 1; overflow-y: auto; padding: 18px;
   display: grid; grid-template-columns: repeat(auto-fill, minmax(390px, 1fr));

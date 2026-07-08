@@ -96,6 +96,31 @@ export const E = {
   },
 }
 
+/**
+ * 阴影分级（柔和高级的"层叠感"）。shadow 可为：
+ *   false/undefined → 无；true → 'md'；'sm'|'md'|'lg'|'xl' → 预设；{ ... } → 覆盖预设。
+ * 返回 pptx 语义参数 { blur, offset, angle, opacity, color }（磅），预览据此换算 box-shadow。
+ */
+const SHADOW_LEVELS = {
+  sm: { blur: 7, offset: 2, opacity: 0.10 },
+  md: { blur: 15, offset: 5, opacity: 0.12 },
+  lg: { blur: 28, offset: 11, opacity: 0.14 },
+  xl: { blur: 42, offset: 18, opacity: 0.16 },
+}
+export function resolveShadow(shadow) {
+  if (!shadow) return null
+  let base = SHADOW_LEVELS.md
+  if (typeof shadow === 'string' && SHADOW_LEVELS[shadow]) base = SHADOW_LEVELS[shadow]
+  const o = (shadow && typeof shadow === 'object') ? shadow : {}
+  return {
+    blur: o.blur != null ? o.blur : base.blur,
+    offset: o.offset != null ? o.offset : base.offset,
+    angle: o.angle != null ? o.angle : 90,
+    opacity: o.opacity != null ? o.opacity : base.opacity,
+    color: o.color || '15233F',
+  }
+}
+
 /** 把文本元素归一化成「逐段」数组，HTML 与 pptx 共用 */
 export function textParagraphs(el) {
   if (Array.isArray(el.paragraphs) && el.paragraphs.length) {

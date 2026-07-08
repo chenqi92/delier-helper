@@ -7,8 +7,9 @@
  */
 import pptxgen from 'pptxgenjs'
 import { SLIDE_W, SLIDE_H } from './ppt-geometry.js'
-import { textParagraphs } from './ppt-elements.js'
+import { textParagraphs, resolveShadow } from './ppt-elements.js'
 import { iconSvg, svgToPngDataUrl } from './ppt-icons.js'
+import { backgroundPngDataUrl, backgroundSolid } from './ppt-background.js'
 
 function hx(c) { return String(c == null ? '000000' : c).replace(/^#/, '').toUpperCase().slice(0, 6).padEnd(6, '0') }
 
@@ -18,8 +19,9 @@ function dashType(d) {
   return 'solid'
 }
 
-function shadowObj(on) {
-  return on ? { type: 'outer', color: '8A94A6', blur: 9, offset: 3, angle: 90, opacity: 0.3 } : undefined
+function shadowObj(shadow) {
+  const s = resolveShadow(shadow)
+  return s ? { type: 'outer', color: hx(s.color), blur: s.blur, offset: s.offset, angle: s.angle, opacity: s.opacity } : undefined
 }
 
 function fillFor(el) {
@@ -81,7 +83,7 @@ function renderImage(slide, el) {
   const opts = { x: el.x, y: el.y, w: el.w, h: el.h, rotate: el.rot || 0, sizing: { type: el.sizing || 'contain', w: el.w, h: el.h } }
   if (String(el.src).startsWith('data:')) opts.data = el.src
   else opts.path = el.src
-  if (el.frame) opts.shadow = shadowObj(true)
+  if (el.frame) opts.shadow = shadowObj('lg')
   slide.addImage(opts)
 }
 
@@ -166,7 +168,9 @@ export async function renderDeckToPptx(deck) {
 
   for (const s of deck.slides || []) {
     const slide = pptx.addSlide()
-    slide.background = { color: hx(s.background?.color || 'FFFFFF') }
+    // 渐变背景：光栅化为 PNG 铺满整页；无 canvas 时退化为纯色
+    const bgPng = s.background?.type === 'gradient' ? backgroundPngDataUrl(s.background) : null
+    slide.background = bgPng ? { data: bgPng } : { color: hx(backgroundSolid(s.background)) }
     for (const el of s.elements || []) {
       if (el.opacity === 0) continue
       try {

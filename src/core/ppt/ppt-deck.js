@@ -10,7 +10,7 @@
  * slide.content 是「结构化内容」的事实来源：切换风格 = 用新风格从 content 重建 elements。
  * 手动编辑过的元素会在「重建/换风格/重生成」时被覆盖（封面/空白页除外）。
  */
-import { getStyle, DEFAULT_STYLE_ID } from './ppt-styles.js'
+import { createThemeStyle, getStyle, resolveStyle, DEFAULT_STYLE_ID } from './ppt-styles.js'
 import { buildSlide, LAYOUT_MAP } from './ppt-layouts.js'
 import { newSlide } from './ppt-elements.js'
 import { SLIDE_W, SLIDE_H } from './ppt-geometry.js'
@@ -19,6 +19,7 @@ export function createEmptyDeck(meta = {}, styleId = DEFAULT_STYLE_ID) {
   return {
     meta: { topic: '', audience: '', language: '中文', direction: '', footnote: '', ...meta },
     styleId,
+    styleDef: null,
     slides: [],
   }
 }
@@ -29,7 +30,8 @@ export function createEmptyDeck(meta = {}, styleId = DEFAULT_STYLE_ID) {
  */
 export function buildDeckFromOutline(outline, meta = {}) {
   const styleId = outline.styleId || DEFAULT_STYLE_ID
-  const style = getStyle(styleId)
+  const styleDef = createThemeStyle(styleId, outline.theme)
+  const style = resolveStyle(styleId, styleDef)
   const slides = outline.slides.map((s, i) => {
     const layout = LAYOUT_MAP[s.layout] || LAYOUT_MAP.bullets
     const content = s.content || { ...(layout.sample || {}), title: s.title || layout.sample?.title }
@@ -38,14 +40,14 @@ export function buildDeckFromOutline(outline, meta = {}) {
     slide.pending = !s.content
     return slide
   })
-  return { meta: { ...createEmptyDeck().meta, ...meta }, styleId, slides }
+  return { meta: { ...createEmptyDeck().meta, ...meta }, styleId, styleDef, slides }
 }
 
 /** 用结构化内容重建某页（保留 id / notes） */
 export function rebuildSlideInPlace(deck, slideIndex) {
   const slide = deck.slides[slideIndex]
   if (!slide || !slide.layout || slide.layout === 'blank') return slide
-  const style = getStyle(deck.styleId)
+  const style = resolveStyle(deck.styleId, deck.styleDef)
   const rebuilt = buildSlide(slide.layout, slide.content || {}, style, slideIndex + 1)
   rebuilt.id = slide.id
   rebuilt.notes = slide.notes
@@ -58,6 +60,7 @@ export function rebuildSlideInPlace(deck, slideIndex) {
 /** 换风格：用新风格从每页 content 重建（封面/空白页若无 content 则保留手动元素） */
 export function restyleDeck(deck, styleId) {
   deck.styleId = styleId
+  deck.styleDef = null
   const style = getStyle(styleId)
   deck.slides = deck.slides.map((s, i) => {
     if (s.layout && s.layout !== 'blank' && s.content && LAYOUT_MAP[s.layout]) {
@@ -75,7 +78,7 @@ export function restyleDeck(deck, styleId) {
 
 /** 新增一页空白页 */
 export function appendBlankSlide(deck) {
-  const style = getStyle(deck.styleId)
+  const style = resolveStyle(deck.styleId, deck.styleDef)
   const s = newSlide({ layout: 'blank', role: 'content', title: '空白页', content: null })
   s.background = { type: 'color', color: style.colors.bgLight }
   deck.slides.push(s)

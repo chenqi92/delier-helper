@@ -11,7 +11,7 @@
 import { E } from './ppt-elements.js'
 import {
   SLIDE_W, SLIDE_H, MARGIN, GUTTER, contentBox, splitCols, gridCells, clamp,
-  mix, lighten, darken, pickInk, ensureContrast, hexToHsl, hslToHex,
+  mix, lighten, darken, pickInk, ensureContrast, hexToHsl, hslToHex, luminance,
 } from './ppt-geometry.js'
 import { slideTheme } from './ppt-styles.js'
 
@@ -19,7 +19,19 @@ const HEADER_BOTTOM = 1.98
 
 // ===================== 共用构件 =====================
 
-function bg(theme) { return { type: 'color', color: theme.bg } }
+function bg(theme) { return theme.bgFill || { type: 'color', color: theme.bg } }
+
+/** 封面/hero 页的渐变背景填充：深—本色—强调光晕。onDark 由背景明度自动判定。 */
+function heroBgFill(colorHex, accentHex, style) {
+  const onDark = luminance(colorHex) < 0.5
+  const angle = Number.isFinite(Number(style?.gradientAngle)) ? Number(style.gradientAngle) : (onDark ? 125 : 160)
+  if (style && style.gradient === false) return { type: 'color', color: colorHex }
+  const deep = mix(colorHex, '000000', onDark ? 0.18 : 0.05)
+  const glow = mix(colorHex, accentHex, onDark ? 0.22 : 0.14)
+  return { type: 'gradient', color: colorHex, angle, stops: [
+    { color: deep, pos: 0 }, { color: colorHex, pos: 52 }, { color: glow, pos: 100 },
+  ] }
+}
 
 function chipWidth(text) {
   return Math.max(0.7, Math.min(3.2, 0.13 * String(text || '').length + 0.34))
@@ -49,11 +61,11 @@ function headerEls(theme, style, { kicker, title, pageNo }) {
     titleY = top + 0.46
   }
   els.push(E.text({
-    x: MARGIN, y: titleY, w: SLIDE_W - 2 * MARGIN - 0.9, h: 0.78,
-    text: title || '', fontFace: style.fonts.title, fontSize: 27, bold: true,
+    x: MARGIN, y: titleY, w: SLIDE_W - 2 * MARGIN - 0.9, h: 0.8,
+    text: title || '', fontFace: style.fonts.title, fontSize: 29, bold: true,
     color: theme.ink, valign: 'middle', shrink: true,
   }))
-  const ruleY = titleY + 0.86
+  const ruleY = titleY + 0.88
   if (['rule-number', 'hairline', 'gold-line', 'serif-big'].includes(style.motif)) {
     els.push(E.line({ x: MARGIN, y: ruleY, w: SLIDE_W - 2 * MARGIN, h: 0, lineColor: theme.line, lineWidth: style.motif === 'gold-line' ? 1.5 : 1 }))
   } else {
@@ -89,8 +101,8 @@ function numberBadge(cx, cy, d, fill, ink, n, fontFace) {
 function featureCard(theme, style, box, { icon, title, desc, accent }) {
   const els = []
   const ac = accent || theme.accent
-  const lightBorder = theme.onDark ? null : { color: mix(theme.card, theme.ink, 0.1), width: 1 }
-  els.push(E.roundRect({ ...box, radius: style.radius, fill: theme.card, line: lightBorder, shadow: !theme.onDark }))
+  const lightBorder = theme.onDark ? { color: mix(theme.card, theme.ink, 0.14), width: 1 } : { color: mix(theme.card, theme.ink, 0.05), width: 1 }
+  els.push(E.roundRect({ ...box, radius: style.radius, fill: theme.card, line: lightBorder, shadow: theme.onDark ? false : 'lg' }))
   let pad = 0.28
   if (style.motif === 'chip-bar') {
     els.push(E.rect({ x: +(box.x + 0.001).toFixed(3), y: box.y + 0.14, w: 0.08, h: box.h - 0.28, fill: ac }))
@@ -126,16 +138,17 @@ function heroDecor(theme, style) {
 
 const ACCENTS = (theme, style) => {
   const c = style.colors
-  return [theme.accent, c.secondary, c.primary, mix(theme.accent, c.primary, 0.5)]
+  return [theme.accent, theme.accent2, c.secondary, mix(theme.accent, theme.accent2, 0.5), c.primary]
 }
 
-// 图表配色：以品牌强调色打头，其余按色相轮转，保证各数据类别之间也能区分
+// 图表配色：主/次强调色打头，其余按色相轮转，保证各数据类别之间也能区分
 function chartPalette(theme, style) {
+  const seeds = [theme.accent, theme.accent2].filter(Boolean)
   const baseH = hexToHsl(theme.accent).h
-  const offsets = [60, 120, 180, 240, 300]
+  const offsets = [45, 95, 150, 205, 265, 320]
   const sat = 0.62, lig = theme.onDark ? 0.62 : 0.45
-  const out = [theme.accent]
-  for (let i = 0; i < offsets.length; i++) out.push(hslToHex(baseH + offsets[i], sat, lig))
+  const out = seeds.slice()
+  for (let i = 0; i < offsets.length && out.length < 7; i++) out.push(hslToHex(baseH + offsets[i], sat, lig))
   return out.map(col => ensureContrast(col, theme.bg, 1.7))
 }
 
@@ -145,79 +158,22 @@ function contentZone(hasNote) {
 }
 
 /**
- * 全局视觉精修层：让生成页不只是“干净摆放元素”，而有更完整的版面层次。
- * 装饰元素都放在底层并标记 decor，保留文本/图表/形状的可编辑性。
+ * 全局视觉精修层：克制、高级。让渐变背景承担纵深，本层只补一枚极淡光晕 + 收口细节，
+ * 不再堆叠网格/虚线/点阵/角标等噪点。装饰元素放底层并标记 decor，保留可编辑性。
  */
 function visualPolish(layoutId, role, style, pageNo) {
   const t = slideTheme(style, role)
+  // hero 页（封面/章节/封底）由渐变 + 封面构图 / heroDecor 承担，这里保持零噪点
+  if (role === 'cover' || role === 'section' || role === 'closing') return []
+  // 满版/分屏型版式自带构图，不叠加光晕与基线
+  if (layoutId === 'splitFeature') return []
+
   const els = []
   const ac = t.accentText || t.accent
-  const soft = t.onDark ? mix(t.bg, t.ink, 0.08) : mix(t.bg, t.accent, 0.06)
-  const softer = t.onDark ? mix(t.bg, t.ink, 0.045) : mix(t.bg, t.primary, 0.035)
-  const grid = t.onDark ? mix(t.bg, t.ink, 0.13) : mix(t.bg, t.ink, 0.88)
-
-  if (role === 'cover' || role === 'section' || role === 'closing') {
-    els.push(E.rect({ x: SLIDE_W - 0.12, y: 0, w: 0.12, h: SLIDE_H, fill: ac, fillAlpha: 0.75, decor: true }))
-    for (let i = 0; i < 9; i++) {
-      els.push(E.line({ x: SLIDE_W - 2.6 + i * 0.22, y: 0.28, w: 0.75, h: 0, lineColor: mix(ac, t.bg, 0.58), lineWidth: 0.55, rot: -35, decor: true }))
-    }
-    return els
-  }
-
-  const denseLayouts = new Set(['businessOverview', 'userJourney', 'workflowDiagram', 'valueMatrix', 'riskMap', 'architecture', 'barChart', 'lineTrend', 'proportion'])
-  const dense = denseLayouts.has(layoutId)
-
-  if (dense) {
-    for (let i = -8; i < 24; i++) {
-      els.push(E.line({ x: i * 0.72, y: 0.1, w: 2.9, h: SLIDE_H + 0.6, lineColor: grid, lineWidth: 0.35, rot: -18, decor: true }))
-    }
-    for (let x = 0.6; x < SLIDE_W; x += 1.2) {
-      els.push(E.line({ x, y: 0.95, w: 0, h: SLIDE_H - 1.72, lineColor: grid, lineWidth: 0.28, dash: 'dash', decor: true }))
-    }
-  }
-
-  els.push(E.rect({ x: 0, y: 0, w: SLIDE_W, h: 0.12, fill: ac, fillAlpha: t.onDark ? 0.45 : 0.25, decor: true }))
-  els.push(E.rect({ x: 0, y: SLIDE_H - 0.16, w: SLIDE_W, h: 0.16, fill: soft, decor: true }))
-  els.push(E.rect({ x: SLIDE_W - 0.2, y: 0, w: 0.2, h: SLIDE_H, fill: ac, fillAlpha: t.onDark ? 0.14 : 0.09, decor: true }))
-  els.push(E.roundRect({ x: SLIDE_W - 2.72, y: 0.42, w: 2.18, h: 0.54, radius: 0.04, fill: soft, decor: true }))
-  els.push(E.text({ x: SLIDE_W - 2.62, y: 0.48, w: 1.96, h: 0.34, text: String(pageNo || '').padStart(2, '0'), align: 'right', fontFace: style.fonts.title, fontSize: 18, bold: true, color: mix(t.muted, t.bg, 0.42), decor: true }))
-  els.push(E.line({ x: 0.62, y: 1.42, w: SLIDE_W - 1.24, h: 0, lineColor: mix(ac, t.bg, t.onDark ? 0.35 : 0.5), lineWidth: 0.8, dash: 'dash', decor: true }))
-
-  const dotX = dense ? SLIDE_W - 2.55 : SLIDE_W - 2.2
-  const dotY = dense ? SLIDE_H - 1.2 : SLIDE_H - 1.05
-  const dotCols = dense ? 9 : 7
-  const dotRows = dense ? 5 : 4
-  for (let r = 0; r < dotRows; r++) {
-    for (let c = 0; c < dotCols; c++) {
-      els.push(E.ellipse({ x: dotX + c * 0.16, y: dotY + r * 0.14, w: 0.035, h: 0.035, fill: ac, fillAlpha: t.onDark ? 0.32 : 0.22, decor: true }))
-    }
-  }
-
-  if (style.motif === 'block') {
-    els.push(E.rect({ x: -0.6, y: SLIDE_H - 1.65, w: 4.1, h: 0.42, fill: t.secondary, fillAlpha: 0.35, rot: -7, decor: true }))
-    els.push(E.rect({ x: SLIDE_W - 4.15, y: 1.28, w: 4.65, h: 0.34, fill: ac, fillAlpha: 0.18, rot: 6, decor: true }))
-  } else if (style.motif === 'hairline' || style.motif === 'serif-big') {
-    els.push(E.rect({ x: 0.38, y: 0.38, w: SLIDE_W - 0.76, h: SLIDE_H - 0.76, fill: null, line: { color: mix(t.line, t.bg, 0.35), width: 0.55 }, decor: true }))
-    els.push(E.line({ x: 0.62, y: SLIDE_H - 0.68, w: 2.0, h: 0, lineColor: mix(ac, t.bg, 0.4), lineWidth: 1.1, decor: true }))
-  } else {
-    els.push(E.ellipse({ x: SLIDE_W - 2.05, y: SLIDE_H - 1.58, w: 2.9, h: 2.9, fill: softer, decor: true }))
-    els.push(E.ellipse({ x: -1.05, y: SLIDE_H - 1.45, w: 2.15, h: 2.15, fill: ac, fillAlpha: t.onDark ? 0.08 : 0.055, decor: true }))
-  }
-
-  if (dense) {
-    const corner = mix(ac, t.bg, 0.18)
-    const cw = 0.48
-    ;[
-      [0.42, 0.42, 1, 1],
-      [SLIDE_W - 0.9, 0.42, -1, 1],
-      [0.42, SLIDE_H - 0.9, 1, -1],
-      [SLIDE_W - 0.9, SLIDE_H - 0.9, -1, -1],
-    ].forEach(([x, y, sx, sy]) => {
-      els.push(E.line({ x, y, w: cw * sx, h: 0, lineColor: corner, lineWidth: 1.1, decor: true }))
-      els.push(E.line({ x, y, w: 0, h: cw * sy, lineColor: corner, lineWidth: 1.1, decor: true }))
-    })
-  }
-
+  // 一枚极淡的大光晕，落在右下角出血，给纯色版面一点空气感（不与左上标题争）
+  els.push(E.ellipse({ x: SLIDE_W - 2.7, y: SLIDE_H - 2.9, w: 5.0, h: 5.0, fill: ac, fillAlpha: t.onDark ? 0.06 : 0.045, decor: true }))
+  // 版面底部收口细线
+  els.push(E.line({ x: MARGIN, y: SLIDE_H - 0.4, w: SLIDE_W - 2 * MARGIN, h: 0, lineColor: mix(t.line, t.bg, t.onDark ? 0.35 : 0.45), lineWidth: 0.75, decor: true }))
   return els
 }
 
@@ -255,7 +211,7 @@ function coverChip(content, style) {
   els.push(E.rect({ x: 1.12, y: 4.45, w: 1.0, h: 0.07, fill: acc }))
   if (content.subtitle) els.push(E.text({ x: 1.12, y: 4.7, w: 9.5, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 17, color: mix(ink, bgc, 0.25), lineSpacing: 23 }))
   if (content.footnote) els.push(E.text({ x: 1.12, y: SLIDE_H - 0.9, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 12, color: mix(ink, bgc, 0.45) }))
-  return { background: { type: 'color', color: bgc }, elements: els }
+  return { background: heroBgFill(bgc, acc, style), elements: els }
 }
 
 function coverSerif(content, style) {
@@ -267,7 +223,7 @@ function coverSerif(content, style) {
   els.push(E.text({ x: 1.06, y: 2.2, w: 10.2, h: 3.0, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 62, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 64 }))
   if (content.subtitle) els.push(E.text({ x: 1.12, y: 5.5, w: 9.2, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 16, italic: true, color: mix(ink, bgc, 0.35), lineSpacing: 22 }))
   if (content.footnote) els.push(E.text({ x: 1.12, y: SLIDE_H - 0.85, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 11.5, color: mix(ink, bgc, 0.45) }))
-  return { background: { type: 'color', color: bgc }, elements: els }
+  return { background: heroBgFill(bgc, acc, style), elements: els }
 }
 
 function coverBlock(content, style) {
@@ -290,7 +246,7 @@ function coverBlock(content, style) {
   els.push(E.text({ x: 1.05, y: 2.0, w: 8.0, h: 2.5, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 52, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 54 }))
   if (content.subtitle) els.push(E.text({ x: 1.1, y: 5.0, w: 7.5, h: 1.4, text: content.subtitle, fontFace: style.fonts.body, fontSize: 17, bold: true, color: pickInk(acc), valign: 'middle', lineSpacing: 22 }))
   if (content.footnote) els.push(E.text({ x: 9.0, y: 5.0, w: 3.7, h: 1.4, text: content.footnote, align: 'right', fontFace: style.fonts.body, fontSize: 12, color: pickInk(acc), valign: 'middle' }))
-  return { background: { type: 'color', color: bgc }, elements: els }
+  return { background: heroBgFill(bgc, acc, style), elements: els }
 }
 
 function coverGold(content, style) {
@@ -303,7 +259,7 @@ function coverGold(content, style) {
   els.push(E.line({ x: SLIDE_W / 2 - 1.0, y: 4.5, w: 2.0, h: 0, lineColor: acc, lineWidth: 1.25 }))
   if (content.subtitle) els.push(E.text({ x: 1.5, y: 4.75, w: SLIDE_W - 3, h: 0.7, text: content.subtitle, align: 'center', fontFace: style.fonts.body, fontSize: 15, color: mix(ink, bgc, 0.3) }))
   if (content.footnote) els.push(E.text({ x: 1.5, y: SLIDE_H - 0.8, w: SLIDE_W - 3, h: 0.4, text: content.footnote, align: 'center', fontFace: style.fonts.body, fontSize: 11.5, color: acc }))
-  return { background: { type: 'color', color: bgc }, elements: els }
+  return { background: heroBgFill(bgc, acc, style), elements: els }
 }
 
 function coverRule(content, style) {
@@ -316,7 +272,7 @@ function coverRule(content, style) {
   if (content.subtitle) els.push(E.text({ x: 1.12, y: 4.5, w: 9.2, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 16, color: mix(ink, bgc, 0.28), lineSpacing: 22 }))
   els.push(E.line({ x: 1.1, y: SLIDE_H - 1.0, w: SLIDE_W - 2.2, h: 0, lineColor: mix(ink, bgc, 0.6), lineWidth: 1 }))
   if (content.footnote) els.push(E.text({ x: 1.1, y: SLIDE_H - 0.85, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 11.5, color: mix(ink, bgc, 0.4) }))
-  return { background: { type: 'color', color: bgc }, elements: els }
+  return { background: heroBgFill(bgc, acc, style), elements: els }
 }
 
 function coverRounded(content, style) {
@@ -339,7 +295,7 @@ function coverRounded(content, style) {
   els.push(E.text({ x: 1.08, y: 2.6, w: 9.3, h: 1.8, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 44, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 48 }))
   if (content.subtitle) els.push(E.text({ x: 1.12, y: 4.6, w: 8.6, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 16, color: mix(ink, bgc, 0.3), lineSpacing: 22 }))
   if (content.footnote) els.push(E.text({ x: 1.12, y: SLIDE_H - 0.9, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 12, color: mix(ink, bgc, 0.45) }))
-  return { background: { type: 'color', color: bgc }, elements: els }
+  return { background: heroBgFill(bgc, acc, style), elements: els }
 }
 
 function coverHairline(content, style) {
@@ -351,6 +307,37 @@ function coverHairline(content, style) {
   els.push(E.text({ x: 1.2, y: 2.8, w: 10.5, h: 1.6, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 42, bold: true, color: ink, valign: 'top', shrink: true, lineSpacing: 46 }))
   if (content.subtitle) els.push(E.text({ x: 1.22, y: 4.5, w: 9, h: 0.8, text: content.subtitle, fontFace: style.fonts.body, fontSize: 15, color: mix(ink, bgc, 0.35), lineSpacing: 21 }))
   if (content.footnote) els.push(E.text({ x: 1.2, y: SLIDE_H - 1.1, w: 9, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 11, color: mix(ink, bgc, 0.45) }))
+  return { background: heroBgFill(bgc, acc, style), elements: els }
+}
+
+// 满版超大字：标题占据大半页的冲击型封面
+function coverFullBleed(content, style) {
+  const c = style.colors, bgc = c.bgDark, ink = c.inkLight, acc = ensureContrast(c.accent, c.bgDark, 3)
+  const els = []
+  els.push(E.text({ x: SLIDE_W - 5.4, y: -1.6, w: 6, h: 7, text: '/', fontFace: style.fonts.title, fontSize: 460, bold: true, color: acc, opacity: 0.08, decor: true }))
+  if (content.kicker) els.push(E.text({ x: 1.1, y: 1.15, w: 10, h: 0.4, text: String(content.kicker).toUpperCase(), fontFace: style.fonts.body, fontSize: 14, bold: true, color: acc, charSpacing: 5 }))
+  els.push(E.text({ x: 1.04, y: 1.85, w: SLIDE_W - 2.0, h: 3.7, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 78, bold: true, color: ink, valign: 'top', lineSpacing: 80, shrink: true }))
+  els.push(E.rect({ x: 1.1, y: 5.72, w: 1.5, h: 0.1, fill: acc }))
+  if (content.subtitle) els.push(E.text({ x: 1.1, y: 5.98, w: 10.5, h: 0.9, text: content.subtitle, fontFace: style.fonts.body, fontSize: 18, color: mix(ink, bgc, 0.22), lineSpacing: 24 }))
+  if (content.footnote) els.push(E.text({ x: 1.1, y: SLIDE_H - 0.8, w: 10, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 12, color: mix(ink, bgc, 0.42) }))
+  return { background: heroBgFill(bgc, acc, style), elements: els }
+}
+
+// 左右分屏：深色强调面板 + 浅色留白说明区
+function coverSplit(content, style) {
+  const c = style.colors, bgc = c.bgLight, acc = c.accent
+  const panelBg = c.bgDark, panelInk = c.inkLight, pAcc = ensureContrast(c.accent, c.bgDark, 3)
+  const els = []
+  const panelW = 5.5
+  els.push(E.rect({ x: 0, y: 0, w: panelW, h: SLIDE_H, fill: panelBg }))
+  els.push(E.rect({ x: panelW, y: 0, w: 0.1, h: SLIDE_H, fill: pAcc }))
+  els.push(E.ellipse({ x: -1.3, y: SLIDE_H - 3.0, w: 3.8, h: 3.8, fill: pAcc, fillAlpha: 0.16, decor: true }))
+  if (content.kicker) els.push(E.text({ x: 0.72, y: 1.45, w: panelW - 1.2, h: 0.4, text: String(content.kicker).toUpperCase(), fontFace: style.fonts.body, fontSize: 13, bold: true, color: pAcc, charSpacing: 4 }))
+  els.push(E.text({ x: 0.68, y: 2.05, w: panelW - 1.1, h: 3.1, text: content.title || '标题', fontFace: style.fonts.title, fontSize: 40, bold: true, color: panelInk, valign: 'top', lineSpacing: 46, shrink: true }))
+  const rx = panelW + 0.75
+  els.push(E.rect({ x: rx, y: 2.2, w: 0.9, h: 0.08, fill: acc }))
+  if (content.subtitle) els.push(E.text({ x: rx, y: 2.52, w: SLIDE_W - rx - 0.8, h: 2.3, text: content.subtitle, fontFace: style.fonts.body, fontSize: 20, color: c.inkDark, valign: 'top', lineSpacing: 28 }))
+  if (content.footnote) els.push(E.text({ x: rx, y: SLIDE_H - 1.0, w: SLIDE_W - rx - 0.8, h: 0.4, text: content.footnote, fontFace: style.fonts.body, fontSize: 12, color: mix(c.inkDark, bgc, 0.4) }))
   return { background: { type: 'color', color: bgc }, elements: els }
 }
 
@@ -358,6 +345,14 @@ const COVER_BY_MOTIF = {
   'chip-bar': coverChip, 'serif-big': coverSerif, 'block': coverBlock,
   'gold-line': coverGold, 'rule-number': coverRule, 'rounded': coverRounded, 'hairline': coverHairline,
 }
+
+// 封面变体（智能编排可按主题气质自由指定，突破"按母题固定"）
+const COVER_VARIANTS = {
+  chip: coverChip, serif: coverSerif, block: coverBlock, gold: coverGold,
+  rule: coverRule, rounded: coverRounded, hairline: coverHairline,
+  fullbleed: coverFullBleed, split: coverSplit,
+}
+export const COVER_VARIANT_IDS = Object.keys(COVER_VARIANTS)
 
 // ===================== 版式注册 =====================
 
@@ -367,7 +362,9 @@ export const LAYOUTS = [
     fields: 'title(主标题), subtitle(副标题/一句话价值), kicker(顶部小标签，可选), footnote(单位/作者/日期，可选)',
     sample: { kicker: 'PRODUCT', title: '主标题占位', subtitle: '一句话副标题', footnote: '汇报单位 · 2026' },
     build(content, style, pageNo) {
-      return (COVER_BY_MOTIF[style.motif] || coverChip)(content, style)
+      const v = style.coverVariant
+      const fn = (v && COVER_VARIANTS[v]) || COVER_BY_MOTIF[style.motif] || coverChip
+      return fn(content, style)
     },
   },
 
@@ -1026,6 +1023,156 @@ export const LAYOUTS = [
         else els.push(...mediaPlaceholder(t, style, imgBox, 'monitor'))
         els.push(E.text({ x: cell.x, y: cell.y + cell.h - 0.28, w: cell.w, h: 0.26, text: caps[i] || '示意图', align: 'center', fontFace: style.fonts.body, fontSize: 10.5, italic: true, color: t.muted }))
       }
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'pillars', label: '支柱分栏(信息饱满)', role: 'content',
+    fields: 'kicker, title, pillars(3-4 个支柱，每个 {icon, title, points(2-4 条要点字符串)})',
+    sample: { kicker: '方法', title: '三大支柱支撑交付', pillars: [{ icon: 'layers', title: '统一底座', points: ['集中数据与配置', '标准化接口', '统一权限模型'] }, { icon: 'workflow', title: '自动流程', points: ['规则驱动处理', '减少人工干预', '异常可回溯'] }, { icon: 'gauge', title: '持续度量', points: ['关键指标可视', '结果沉淀复用', '闭环持续改进'] }] },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const pillars = (content.pillars || []).slice(0, 4)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.28, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.7 }
+      const cols = splitCols(Math.max(pillars.length, 1), { x: box.x, w: box.w, gutter: GUTTER })
+      const accents = ACCENTS(t, style)
+      pillars.forEach((p, i) => {
+        const col = cols[i], ac = accents[i % accents.length]
+        const lightBorder = t.onDark ? { color: mix(t.card, t.ink, 0.14), width: 1 } : { color: mix(t.card, t.ink, 0.05), width: 1 }
+        els.push(E.roundRect({ x: col.x, y: box.y, w: col.w, h: box.h, radius: style.radius, fill: t.card, line: lightBorder, shadow: t.onDark ? false : 'lg' }))
+        els.push(E.rect({ x: col.x, y: box.y, w: col.w, h: 0.11, fill: ac }))
+        const pad = 0.3
+        els.push(...chipIcon(col.x + pad + 0.32, box.y + 0.74, 0.64, { icon: p.icon || 'target', glyph: pickInk(ac), fill: ac, round: style.motif !== 'block' }))
+        els.push(E.text({ x: col.x + pad, y: box.y + 1.22, w: col.w - 2 * pad, h: 0.5, text: p.title || '', fontFace: style.fonts.title, fontSize: 16, bold: true, color: t.cardInk, shrink: true }))
+        els.push(E.line({ x: col.x + pad, y: box.y + 1.8, w: col.w - 2 * pad, h: 0, lineColor: mix(t.line, ac, 0.3), lineWidth: 0.8 }))
+        const pts = (p.points || []).slice(0, 4)
+        const py = box.y + 2.02
+        const prowH = Math.min(0.66, (box.y + box.h - py - 0.18) / Math.max(pts.length, 1))
+        pts.forEach((pt, k) => {
+          const yy = py + k * prowH
+          els.push(E.ellipse({ x: col.x + pad + 0.01, y: yy + prowH / 2 - 0.05, w: 0.1, h: 0.1, fill: ac }))
+          els.push(E.text({ x: col.x + pad + 0.26, y: yy, w: col.w - 2 * pad - 0.26, h: prowH, text: pt, fontFace: style.fonts.body, fontSize: 11.5, color: mix(t.cardInk, t.card, 0.2), valign: 'middle', lineSpacing: 14, wrap: true }))
+        })
+      })
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'quadrant', label: '四象限矩阵', role: 'content',
+    fields: 'kicker, title, xAxis(横轴标签,可选), yAxis(纵轴标签,可选), quadrants(4 个 {icon(可选), title, desc})',
+    sample: { kicker: '定位', title: '能力—价值四象限', xAxis: '实现成本 低 → 高', yAxis: '业务价值 低 → 高', quadrants: [{ icon: 'rocket', title: '优先突破', desc: '高价值、低成本，先做' }, { icon: 'target', title: '战略投入', desc: '高价值、高成本，规划推进' }, { icon: 'check', title: '顺手完成', desc: '低价值、低成本，有余力再做' }, { icon: 'clock', title: '暂缓观察', desc: '低价值、高成本，暂不投入' }] },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const q = (content.quadrants || []).slice(0, 4)
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.3, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.7 }
+      const axL = content.yAxis ? 0.44 : 0, axB = content.xAxis ? 0.42 : 0
+      const grid = { x: box.x + axL, y: box.y, w: box.w - axL, h: box.h - axB }
+      const cells = gridCells(grid, 2, 2, 0.26)
+      const accents = ACCENTS(t, style)
+      const fallbackIcons = ['rocket', 'target', 'check', 'clock']
+      q.forEach((it, i) => {
+        const cell = cells[i], ac = accents[i % accents.length]
+        els.push(E.roundRect({ ...cell, radius: style.radius, fill: t.card, line: { color: mix(t.line, ac, 0.25), width: 1 }, shadow: t.onDark ? false : 'lg' }))
+        els.push(E.rect({ x: cell.x, y: cell.y, w: 0.11, h: cell.h, fill: ac }))
+        els.push(...chipIcon(cell.x + 0.56, cell.y + 0.52, 0.52, { icon: it.icon || fallbackIcons[i], glyph: pickInk(ac), fill: ac, round: style.motif !== 'block' }))
+        els.push(E.text({ x: cell.x + 0.96, y: cell.y + 0.26, w: cell.w - 1.2, h: 0.5, text: it.title || '', fontFace: style.fonts.title, fontSize: 15, bold: true, color: t.cardInk, valign: 'middle', shrink: true }))
+        els.push(E.text({ x: cell.x + 0.36, y: cell.y + 0.98, w: cell.w - 0.66, h: cell.h - 1.18, text: it.desc || '', fontFace: style.fonts.body, fontSize: 11.5, color: mix(t.cardInk, t.card, 0.22), lineSpacing: 15, wrap: true }))
+      })
+      if (content.yAxis) els.push(E.text({ x: box.x - grid.h / 2 + 0.14, y: box.y + grid.h / 2 - 0.2, w: grid.h, h: 0.4, text: content.yAxis, rot: -90, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 11, bold: true, color: t.muted, decor: true }))
+      if (content.xAxis) els.push(E.text({ x: grid.x, y: box.y + box.h - 0.34, w: grid.w, h: 0.34, text: content.xAxis, align: 'center', valign: 'middle', fontFace: style.fonts.body, fontSize: 11, bold: true, color: t.muted }))
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'statement', label: '主张陈述(满版大字)', role: 'section',
+    fields: 'kicker(小标签), statement(一句有力主张，简短有锋芒), support(可选补充一行)',
+    sample: { kicker: '核心主张', statement: '把复杂留给系统，把确定交给团队。', support: '这是我们对交付方式的重新定义。' },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'section')
+      const els = []
+      const acc = t.accentText || t.accent
+      els.push(E.rect({ x: 0, y: 0, w: 0.2, h: SLIDE_H, fill: acc }))
+      els.push(E.text({ x: SLIDE_W - 4.8, y: -1.5, w: 5.2, h: 6.5, text: '“', fontFace: style.fonts.title, fontSize: 340, bold: true, color: acc, opacity: 0.1, decor: true }))
+      if (content.kicker) els.push(E.text({ x: 1.1, y: 1.5, w: 9, h: 0.4, text: String(content.kicker).toUpperCase(), fontFace: style.fonts.body, fontSize: 13, bold: true, color: acc, charSpacing: 4 }))
+      els.push(E.text({ x: 1.04, y: 2.25, w: SLIDE_W - 2.6, h: 3.3, text: content.statement || '', fontFace: style.fonts.title, fontSize: 48, bold: true, color: t.ink, valign: 'middle', lineSpacing: 58, shrink: true }))
+      els.push(E.rect({ x: 1.1, y: SLIDE_H - 1.55, w: 1.1, h: 0.08, fill: acc }))
+      if (content.support) els.push(E.text({ x: 1.1, y: SLIDE_H - 1.28, w: SLIDE_W - 3.2, h: 0.7, text: content.support, fontFace: style.fonts.body, fontSize: 17, color: mix(t.ink, t.bg, 0.28), lineSpacing: 22 }))
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'bigStat', label: '核心指标(超大数字)', role: 'content',
+    fields: 'kicker, title, hero{value(数字/短文), unit(单位,可选), label(说明), desc(一句解读)}, more(可选 2-3 个 {value,unit,label})。无真实数据不要编造',
+    sample: { kicker: '成效', title: '一个数字看变化', hero: { value: '10', unit: '×', label: '交付效率提升', desc: '从人工整理到一键生成，端到端提速一个数量级。' }, more: [{ value: '70', unit: '%', label: '重复工作减少' }, { value: '99.9', unit: '%', label: '服务可用性' }] },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const els = headerEls(t, style, { kicker: content.kicker, title: content.title || '', pageNo })
+      const box = { x: MARGIN, y: HEADER_BOTTOM + 0.32, w: SLIDE_W - 2 * MARGIN, h: SLIDE_H - HEADER_BOTTOM - 0.85 }
+      const hero = content.hero || {}
+      const leftW = box.w * 0.54
+      // 数值与单位同一行（单位小号），避免堆叠过高与说明文字相撞
+      els.push(E.text({
+        x: box.x, y: box.y + 0.05, w: leftW, h: 1.95, valign: 'top', fontFace: style.fonts.title, color: ensureContrast(t.accent, t.bg, 3), shrink: true,
+        paragraphs: [{ text: String(hero.value ?? '') + (hero.unit ? ' ' + hero.unit : ''), fontSize: 122, bold: true }],
+      }))
+      els.push(E.text({ x: box.x + 0.06, y: box.y + 2.25, w: leftW, h: 0.5, text: hero.label || '', fontFace: style.fonts.title, fontSize: 21, bold: true, color: t.ink, shrink: true }))
+      if (hero.desc) els.push(E.text({ x: box.x + 0.06, y: box.y + 2.85, w: leftW - 0.2, h: 1.5, text: hero.desc, fontFace: style.fonts.body, fontSize: 14, color: t.muted, lineSpacing: 20, wrap: true }))
+      els.push(E.line({ x: box.x + leftW + 0.35, y: box.y + 0.2, w: 0, h: box.h - 0.4, lineColor: t.line, lineWidth: 1 }))
+      const more = (content.more || []).slice(0, 3)
+      const rx = box.x + leftW + 0.75, rw = box.w - leftW - 0.75
+      const rh = box.h / Math.max(more.length, 1)
+      const accents = ACCENTS(t, style)
+      more.forEach((m, i) => {
+        const y = box.y + i * rh
+        const ac = accents[(i + 1) % accents.length]
+        els.push(E.text({
+          x: rx, y: y + rh * 0.12, w: rw, h: rh * 0.44, valign: 'bottom', fontFace: style.fonts.title, color: ensureContrast(ac, t.bg, 3), shrink: true,
+          text: String(m.value ?? '') + (m.unit ? ' ' + m.unit : ''), fontSize: 40, bold: true,
+        }))
+        els.push(E.text({ x: rx, y: y + rh * 0.62, w: rw, h: 0.4, text: m.label || '', fontFace: style.fonts.body, fontSize: 13, color: t.muted, shrink: true }))
+        if (i < more.length - 1) els.push(E.line({ x: rx, y: y + rh - 0.06, w: rw - 0.3, h: 0, lineColor: t.line, lineWidth: 0.6 }))
+      })
+      return { background: bg(t), elements: els }
+    },
+  },
+
+  {
+    id: 'splitFeature', label: '左栏聚焦(非对称分屏)', role: 'content',
+    fields: 'kicker, title(左侧大标题), lead(左侧引导句，可选), points(右侧 3-4 条，每条 {title, desc})',
+    sample: { kicker: '重点', title: '一处入口，统管全流程', lead: '把分散的操作收敛到一个界面。', points: [{ title: '统一入口', desc: '集中承载日常操作，减少来回切换' }, { title: '自动处理', desc: '规则驱动完成重复步骤' }, { title: '全程可追溯', desc: '保留上下文与结果便于复核' }] },
+    build(content, style, pageNo) {
+      const t = slideTheme(style, 'content')
+      const c = style.colors
+      const els = []
+      const panelW = 4.95
+      const panelBg = t.onDark ? mix(t.bg, '000000', 0.14) : c.primary
+      const panelInk = pickInk(panelBg, c.inkLight, c.inkDark)
+      const acc = ensureContrast(c.accent, panelBg, 3)
+      els.push(E.rect({ x: 0, y: 0, w: panelW, h: SLIDE_H, fill: panelBg }))
+      els.push(E.rect({ x: panelW - 0.08, y: 0, w: 0.08, h: SLIDE_H, fill: acc }))
+      els.push(E.ellipse({ x: -1.5, y: SLIDE_H - 3.2, w: 4.2, h: 4.2, fill: acc, fillAlpha: 0.14, decor: true }))
+      if (content.kicker) els.push(E.text({ x: 0.72, y: 1.35, w: panelW - 1.2, h: 0.4, text: String(content.kicker).toUpperCase(), fontFace: style.fonts.body, fontSize: 12, bold: true, color: acc, charSpacing: 3 }))
+      els.push(E.text({ x: 0.68, y: 2.0, w: panelW - 1.05, h: 2.7, text: content.title || '', fontFace: style.fonts.title, fontSize: 32, bold: true, color: panelInk, valign: 'top', lineSpacing: 38, shrink: true }))
+      if (content.lead) els.push(E.text({ x: 0.72, y: SLIDE_H - 2.15, w: panelW - 1.25, h: 1.5, text: content.lead, fontFace: style.fonts.body, fontSize: 14, color: mix(panelInk, panelBg, 0.3), lineSpacing: 20, wrap: true }))
+      const points = (content.points || []).slice(0, 4)
+      const rx = panelW + 0.62, rw = SLIDE_W - panelW - 0.62 - MARGIN
+      const top = 1.0, areaH = SLIDE_H - top - 0.85
+      const rowH = areaH / Math.max(points.length, 1)
+      const accents = ACCENTS(t, style)
+      points.forEach((p, i) => {
+        const y = top + i * rowH
+        const ac = accents[i % accents.length]
+        els.push(E.text({ x: rx, y: y + 0.08, w: 1.0, h: 0.9, text: String(i + 1).padStart(2, '0'), fontFace: style.fonts.title, fontSize: 30, bold: true, color: ensureContrast(ac, t.bg, 3), valign: 'top' }))
+        els.push(E.text({ x: rx + 1.05, y: y + 0.1, w: rw - 1.05, h: 0.5, text: p.title || '', fontFace: style.fonts.title, fontSize: 17, bold: true, color: t.ink, shrink: true }))
+        els.push(E.text({ x: rx + 1.05, y: y + 0.62, w: rw - 1.05, h: rowH - 0.82, text: p.desc || '', fontFace: style.fonts.body, fontSize: 13, color: t.muted, lineSpacing: 18, wrap: true }))
+        if (i < points.length - 1) els.push(E.line({ x: rx + 1.05, y: y + rowH - 0.08, w: rw - 1.05, h: 0, lineColor: t.line, lineWidth: 0.6 }))
+      })
       return { background: bg(t), elements: els }
     },
   },

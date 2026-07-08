@@ -8,8 +8,10 @@
  * 不臆造数字/客户名/指标、文案精炼一句话一个要点。
  */
 import { callLlm, createAiController } from '../llm/llm-service.js'
-import { listStyles, getStyle, pickRandomStyle, DEFAULT_STYLE_ID } from './ppt-styles.js'
+import { listStyles, getStyle, pickRandomStyle, DEFAULT_STYLE_ID, PPT_FONT_PAIRS } from './ppt-styles.js'
 import { LAYOUT_MAP, LAYOUT_IDS, layoutMenuForPrompt } from './ppt-layouts.js'
+
+const FONT_PAIR_KEYS = Object.keys(PPT_FONT_PAIRS)
 
 export { createAiController }
 
@@ -74,6 +76,11 @@ function slideTemperature(cfg = {}) {
   return 0.68
 }
 
+function cleanHex(v) {
+  const s = String(v || '').replace(/^#/, '').trim()
+  return /^[0-9a-fA-F]{6}$/.test(s) ? s.toUpperCase() : ''
+}
+
 function outlineImageRule(imgCount, mode) {
   if (imgCount > 0) {
     const target = Math.min(imgCount, 3)
@@ -130,17 +137,59 @@ ${imageRule}`
 ${imageRule}`
 }
 
+const PPT_FONT_MENU = `可选字体配对 fontPair（择一；中文标题优先 yahei / clean）：
+- yahei（微软雅黑，中文通用、稳）
+- clean（Calibri，现代无衬线）
+- serif（Georgia 标题 + Calibri 正文，稳重经典）
+- editorial（Georgia + Arial，杂志编辑感）
+- humanist（Trebuchet MS + Calibri，友好人文）
+- elegant（Palatino + Garamond，优雅衬线，高端/文创）
+- impact（Arial Black + Arial，强冲击发布会）
+- geometric（Century Gothic + Calibri，几何现代）`
+
+function designPrinciplesBlock() {
+  return `【设计原则（务必落地，避免"只是换个颜色、结构雷同"的平庸感）】
+· 主色支配 60-30-10：确定一个支配性背景基调(60%)、一个辅助色域(30%)、一个高辨识强调色(10%)。既不要通篇一个颜色，也不要五颜六色。
+· 选定一种配色和谐关系并贯穿全套：单色深浅 / 邻近色 / 互补撞色 / 三角色，任选其一；用第二强调色 accent2 做"记忆点"，仅在关键处点睛（数据高亮、关键卡片、图表次要序列）。
+· 明暗由语气驱动：锐利/科技/发布 → 深色 mode=dark；治理/信任/政务/医疗 → 浅底或三明治 sandwich；编辑/文创/品牌 → 浅底大留白。
+· 深底要够深、浅底要够浅，正文对比 ≥ 4.5:1；强调色别选到与背景明度接近而"发灰"。
+· 渐变造层次：hero 页用"深—本色—强调光晕"斜向渐变（系统据 palette + gradientAngle 自动生成），内容页只做极轻洗色，不喧宾夺主；gradientAngle 给 100-170 之间的角度。
+· 字体承载性格：为主题挑一个合适 fontPair，不要所有主题都用同一套字。
+· 版面三级层次：标题 / 副信息 / 正文 的字号·字重·颜色分明，重点突出。`
+}
+
 function themeDesignPrompt(cfg = {}) {
   const autoTheme = !cfg.styleId || cfg.styleId === 'auto' || cfg.styleId === 'random'
+  const principles = designPrinciplesBlock()
   if (!autoTheme) {
-    return `【主题设计】当前已指定风格，只需围绕该风格设计贴合内容的标题体系、封面标签和页面表达，不要额外更换视觉方向。`
+    return `【主题设计（已指定风格 —— 保持识别度）】用户已明确选定该风格，请保持它的主色、明暗节奏与母题识别度，不要大改配色。palette 只做贴合主题的轻微校准（微调明度/饱和度，或让强调色更贴主题），可补一个 accent2 点睛色、gradientAngle 与 fontPair 让层次更足，但整体仍要一眼认得出是所选风格。
+
+${principles}
+
+${PPT_FONT_MENU}`
   }
-  return `【主题设计（智能编排重点）】
-1. 先根据主题、受众、业务上下文和内容大方向设计一个专属主题概念，而不是默认套用“科技产品 / 平台介绍 / 项目汇报”的通用主题。
-2. theme.name 要像一个可执行的汇报主题或策展主题，例如“从分散交付到可控运营”“模型资产的安全中枢”“低成本协作的自动化工作台”；不要写“科技产品”“项目介绍”这类泛词。
-3. theme.concept 描述视觉和叙事气质：是冷静可信、编辑杂志、治理中枢、温暖品牌、风险控制、效率飞轮，还是其他更贴切的方向。
-4. theme.coverKicker 是封面小标签，应跟主题匹配，例如“治理方案”“运营中枢”“交付提效”“能力蓝图”“风险控制”，不要默认写“产品”。
-5. style 只是从风格库中选最接近的视觉基底；真正的页面标题、kicker、intent 要服从 theme，而不是服从模板名。`
+  return `【主题设计（智能编排重点 —— 天马行空、非常美观、拒绝套路）】
+你现在是这套 PPT 的艺术总监。目标是做出**有强烈个性、令人眼前一亮**的方案，而不是"换个颜色的通用模板"。
+
+1. 先据主题/受众/业务与大方向，构思一个大胆的视觉概念（editorial 杂志感 / bold 几何撞色 / minimal 瑞士极简 / luxe 高端留白 / kinetic 科技动感 …任选或混搭），让整套有统一而鲜明的气质。theme.concept 一句话点明它；theme.name 像可执行的策展主题；theme.coverKicker 贴主题，别默认"产品"。
+2. 配色完全自由：原创一整套 palette（HEX、不带 #）：primary / secondary / accent / accent2 / bgDark / bgLight / inkDark / inkLight / cardBg / cardBgDark。不要照抄风格库默认色，不要一律深蓝/青蓝。style 只作视觉基底，颜色一律以你的 palette 为准。
+3. 一并给出 accent2、gradientAngle、fontPair、paletteName，以及 **coverVariant**（封面构图）——按气质选：冲击发布用 fullbleed（满版超大字）、方案对话用 split（左右分屏）、杂志感用 serif、高端用 gold、极简用 hairline、几何撞色用 block。
+4. **版式要有戏剧性节奏，但重音要克制**：满版/超大/非对称版式（statement / bigStat / splitFeature / 封面 fullbleed）是"重音"，**全套合计 2-4 页就够，别每页都满版**——它们贵在稀有。
+   · statement：把最有锋芒的一句主张做成满版大字（每套 0-1 次）。
+   · bigStat：把最关键的一个数字放到超大（有真实数据时用，0-1 次）。
+   · splitFeature：讲聚焦重点时用一次非对称左栏分屏。
+5. **其余内容页要"饱满"**：用信息密度高的结构化版式把每页讲透，而不是每页只放 3 个短卡片或几行字——
+   · 讲方法/支柱用 pillars（3-4 栏，每栏 2-4 条要点）；讲取舍/定位用 quadrant（四象限）。
+   · 讲全貌/流程/价值/风险用 businessOverview / workflowDiagram / userJourney / valueMatrix / riskMap / architecture，字段填满、每项写具体。
+   · 有可量化信息就上 barChart / lineTrend / proportion / progressBars。
+   · 卡片网格类（iconCards/featureGrid/capabilityGrid）合计别超过 2 页。
+6. 每页标题像一条结论，有锋芒；避免"项目背景/核心能力/价值总结"这类空泛标题连续出现。
+
+${principles}
+
+${PPT_FONT_MENU}
+
+【配色对比自检】bgDark 足够深、bgLight 足够浅；inkLight 压 bgDark、inkDark 压 bgLight 都要清晰(≥4.5:1)；accent/accent2 压在各自背景上不发灰。系统会再做一层对比度兜底，但请先自检。`
 }
 
 function slideExpressionRule(cfg = {}) {
@@ -179,7 +228,26 @@ export function buildOutlineMessages(contextSummary, cfg, lastStyleId = null) {
     "name": "<本套 PPT 的专属主题名>",
     "concept": "<视觉与叙事概念，一句话>",
     "tone": "<表达语气，如 冷静可信 / 锐利发布 / 温暖叙事 / 治理中枢>",
-    "coverKicker": "<封面小标签，不要默认写产品>"
+    "coverKicker": "<封面小标签，不要默认写产品>",
+    "paletteName": "<调色板名称，例如 海图夜航 / 低空雷达 / 纸面审计>",
+    "mode": "dark|light|sandwich",
+    "motif": "chip-bar|rule-number|serif-big|rounded|hairline|block|gold-line",
+    "signature": "<本套视觉记忆点，例如 航线网格、票据切角、雷达扫描线>",
+    "fontPair": "<字体配对 key，见下方菜单>",
+    "coverVariant": "<封面构图: chip|serif|block|gold|rule|rounded|hairline|fullbleed|split>",
+    "gradientAngle": "<渐变角度数字 100-170>",
+    "palette": {
+      "primary": "<主色 HEX>",
+      "secondary": "<辅助色 HEX>",
+      "accent": "<强调色 HEX>",
+      "accent2": "<第二强调色 HEX，点睛用，与 accent 有明显色相差>",
+      "bgDark": "<深底 HEX>",
+      "bgLight": "<浅底 HEX>",
+      "inkDark": "<深色文字 HEX>",
+      "inkLight": "<浅色文字 HEX>",
+      "cardBg": "<浅色卡片 HEX>",
+      "cardBgDark": "<深色卡片 HEX>"
+    }
   },
   "slides": [ { "layout": "<版式 id>", "title": "<该页标题，含信息量，不空喊>", "intent": "<这页要传达什么，一句话>" } ]
 }
@@ -224,7 +292,9 @@ ${contextSummary || '（无扫描上下文，请只写该领域通用、可验�
   return [{ role: 'system', content: system }, { role: 'user', content: user }]
 }
 
-const ALT_LAYOUTS = ['businessOverview', 'userJourney', 'workflowDiagram', 'valueMatrix', 'riskMap', 'bullets', 'iconCards', 'featureGrid', 'timeline', 'bigNumbers', 'compareColumns', 'barChart', 'architecture', 'progressBars', 'capabilityGrid', 'lineTrend', 'proportion', 'cycle', 'compareTable']
+const ALT_LAYOUTS = ['businessOverview', 'userJourney', 'workflowDiagram', 'valueMatrix', 'riskMap', 'pillars', 'quadrant', 'bullets', 'iconCards', 'featureGrid', 'timeline', 'bigNumbers', 'bigStat', 'splitFeature', 'statement', 'compareColumns', 'barChart', 'architecture', 'progressBars', 'capabilityGrid', 'lineTrend', 'proportion', 'cycle', 'compareTable']
+
+const COVER_VARIANT_IDS = ['chip', 'serif', 'block', 'gold', 'rule', 'rounded', 'hairline', 'fullbleed', 'split']
 
 /** 把模型返回的大纲规整到合法、命中页数、首尾正确、相邻不重复 */
 export function normalizeOutline(parsed, cfg, lastStyleId = null) {
@@ -239,6 +309,22 @@ export function normalizeOutline(parsed, cfg, lastStyleId = null) {
     concept: String(parsed.theme.concept || '').slice(0, 180),
     tone: String(parsed.theme.tone || '').slice(0, 80),
     coverKicker: String(parsed.theme.coverKicker || '').slice(0, 40),
+    paletteName: String(parsed.theme.paletteName || parsed.theme.palette?.name || '').slice(0, 60),
+    mode: ['dark', 'light', 'sandwich'].includes(parsed.theme.mode) ? parsed.theme.mode : '',
+    motif: ['chip-bar', 'rule-number', 'serif-big', 'rounded', 'hairline', 'block', 'gold-line'].includes(parsed.theme.motif) ? parsed.theme.motif : '',
+    signature: String(parsed.theme.signature || '').slice(0, 120),
+    fontPair: FONT_PAIR_KEYS.includes(String(parsed.theme.fontPair || '').toLowerCase()) ? String(parsed.theme.fontPair).toLowerCase() : '',
+    coverVariant: COVER_VARIANT_IDS.includes(String(parsed.theme.coverVariant || '').toLowerCase()) ? String(parsed.theme.coverVariant).toLowerCase() : '',
+    gradientAngle: (() => { const a = Number(parsed.theme.gradientAngle); return Number.isFinite(a) ? ((a % 360) + 360) % 360 : undefined })(),
+    palette: (() => {
+      const src = parsed.theme.palette && typeof parsed.theme.palette === 'object' ? parsed.theme.palette : {}
+      const out = {}
+      for (const key of ['primary', 'secondary', 'accent', 'accent2', 'bgDark', 'bgLight', 'inkDark', 'inkLight', 'cardBg', 'cardBgDark']) {
+        const val = cleanHex(src[key])
+        if (val) out[key] = val
+      }
+      return out
+    })(),
   } : null
 
   const imgCount = Math.max(0, parseInt(cfg.imageCount, 10) || 0)
