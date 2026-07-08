@@ -563,6 +563,17 @@ function friendlyModelUnsupportedMessage(message, config = {}) {
     return parts.join('')
 }
 
+export class CloudApiError extends Error {
+    constructor(message, options = {}) {
+        super(message)
+        this.name = 'CloudApiError'
+        this.status = options.status || 0
+        this.code = options.code || ''
+        this.details = options.details || null
+        this.response = options.response || null
+    }
+}
+
 async function cloudPost(serviceUrl, path, body, apiKey = '', clientId = '') {
     const base = normalizeCloudServiceUrl(serviceUrl)
     const result = await invoke('llm_request', {
@@ -575,7 +586,7 @@ async function cloudPost(serviceUrl, path, body, apiKey = '', clientId = '') {
         },
     })
     if (!result.success) {
-        throw new Error(parseCloudError(result))
+        throw createCloudError(result)
     }
     return parseJsonBody(result.body || '{}', '云端响应')
 }
@@ -590,18 +601,25 @@ async function cloudGet(serviceUrl, path, apiKey = '', clientId = '') {
         },
     })
     if (!result.success) {
-        throw new Error(parseCloudError(result))
+        throw createCloudError(result)
     }
     return parseJsonBody(result.body || '{}', '云端响应')
 }
 
-function parseCloudError(result) {
+function createCloudError(result) {
     const raw = result.error || result.body || `HTTP ${result.status || 0}`
+    const text = String(raw).replace(/^HTTP \d+:\s*/, '')
     try {
-        const body = JSON.parse(String(raw).replace(/^HTTP \d+:\s*/, ''))
-        return body.error?.message || body.error?.code || raw
+        const body = JSON.parse(text)
+        const error = body.error || body
+        return new CloudApiError(error.message || error.code || raw, {
+            status: result.status,
+            code: error.code || '',
+            details: error.details || null,
+            response: body,
+        })
     } catch {
-        return raw
+        return new CloudApiError(raw, { status: result.status })
     }
 }
 
@@ -768,13 +786,16 @@ export async function syncCloudProvider(serviceUrl) {
     if (!account) throw new Error('请先登录云端账号')
     account = await ensureCloudAccessToken()
     const data = await cloudGet(serviceUrl || account.serviceUrl, '/v1/models', account.accessToken || account.token || '', account.clientId || '')
-    const models = promotePreferredDefaultModel(Array.isArray(data.data) ? data.data.map(m => ({
+    const detectedModels = Array.isArray(data.data) ? data.data.map(m => ({
         id: m.id,
         label: m.id,
         capabilities: {},
         contextLength: m.context_length || m.contextLength || inferContextLengthFromId(m.id) || 32768,
+        isDefault: !!(m.default || m.isDefault),
         ...(m.max_output_tokens || m.maxOutputTokens ? { maxOutputTokens: m.max_output_tokens || m.maxOutputTokens } : {}),
-    })) : [])
+    })) : []
+    const models = detectedModels.some(m => m.isDefault) ? detectedModels : promotePreferredDefaultModel(detectedModels)
+    const activeModelId = models.find(m => m.isDefault)?.id || models[0]?.id || ''
     const provider = {
         id: CLOUD_PROVIDER_ID,
         providerId: 'ranzhu-cloud',
@@ -784,11 +805,11 @@ export async function syncCloudProvider(serviceUrl) {
         cloudManaged: true,
         clientId: account.clientId || '',
         models,
-        activeModelId: models[0]?.id || '',
+        activeModelId,
         sortOrder: -100,
     }
     await upsertProviderConfig(provider)
-    if (models[0]?.id) await saveActiveSelection(provider.id, models[0].id)
+    if (activeModelId) await saveActiveSelection(provider.id, activeModelId)
     return provider
 }
 

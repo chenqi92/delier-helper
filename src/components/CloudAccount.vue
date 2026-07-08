@@ -244,6 +244,7 @@ const SHOW_WECHAT = false
 const TURNSTILE_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const CODE_RE = /^\d{6}$/
+const CODE_COOLDOWN_STORAGE_PREFIX = 'ranzhu-cloud-email-code-next-send-at'
 
 const LEVEL_LABELS = { 0: '免费版', 1: '基础版', 2: '专业版', 3: '旗舰版' }
 
@@ -371,12 +372,23 @@ export default {
       return this.currentEmailValid && this.codeValid
     },
     codeBtnLabel() {
-      if (this.codeCooldown > 0) return `${this.codeCooldown}s`
+      if (this.codeCooldown > 0) return `${this.codeCooldown} 秒后重发`
       return this.codeSending ? '发送中...' : '发送验证码'
     },
     submitButtonLabel() {
       if (this.submitting) return '处理中...'
       return this.authMode === 'register' ? '注册并登录' : '登录'
+    },
+  },
+  watch: {
+    currentEmail() {
+      this.restoreCooldown()
+    },
+    authMode() {
+      this.$nextTick(() => this.restoreCooldown())
+    },
+    loginMethod() {
+      this.$nextTick(() => this.restoreCooldown())
     },
   },
   async mounted() {
@@ -460,6 +472,7 @@ export default {
       this.cloudStatus = ''
       this.cloudStatusType = 'info'
       this.stopCooldown()
+      this.$nextTick(() => this.restoreCooldown())
     },
 
     toggleLoginMethod() {
@@ -467,6 +480,7 @@ export default {
       this.emailCode = ''
       this.cloudStatus = ''
       this.stopCooldown()
+      this.$nextTick(() => this.restoreCooldown())
     },
 
     async onForgotPassword() {
@@ -522,12 +536,14 @@ export default {
         const res = await sendCloudEmailCode(CLOUD_SERVICE_URL, email, this.captchaToken, scene)
         if (res && res.debugCode) this.emailCode = res.debugCode
         this.setStatus('验证码已发送，请查收邮箱', 'success')
-        this.startCooldown(60)
+        this.startCooldown(res?.cooldownSeconds || res?.retryAfter || 60, res?.nextSendAt)
         this.resetTurnstile()
       } catch (e) {
         const msg = e.message || String(e)
-        if (/rate_limited|Too many|429/i.test(msg)) {
-          this.setStatus('验证码发送太频繁，请稍后再试', 'error')
+        const retry = this.getRetryAfter(e)
+        if (retry.seconds > 0 || /cooldown|rate_limited|Too many|429/i.test(msg)) {
+          if (retry.seconds > 0) this.startCooldown(retry.seconds, retry.nextSendAt)
+          this.setStatus(retry.seconds > 0 ? `验证码发送太频繁，请 ${retry.seconds} 秒后再试` : '验证码发送太频繁，请稍后再试', 'error')
         } else if (/captcha|turnstile/i.test(msg)) {
           this.setStatus('人机验证失败，请重试', 'error')
           this.resetTurnstile()
@@ -607,13 +623,24 @@ export default {
       this.closeAuthModal()
     },
 
-    startCooldown(seconds) {
+    startCooldown(seconds, nextSendAt = null) {
+      const now = Math.floor(Date.now() / 1000)
+      const target = Number(nextSendAt) > now ? Number(nextSendAt) : now + Math.max(1, Number(seconds) || 60)
+      this.persistCooldown(target)
+      this.startCooldownUntil(target)
+    },
+
+    startCooldownUntil(nextSendAt) {
       this.stopCooldown()
-      this.codeCooldown = seconds
-      this.codeCooldownTimer = setInterval(() => {
-        this.codeCooldown = Math.max(0, this.codeCooldown - 1)
-        if (this.codeCooldown <= 0) this.stopCooldown()
-      }, 1000)
+      const tick = () => {
+        this.codeCooldown = Math.max(0, Math.ceil(Number(nextSendAt) - Date.now() / 1000))
+        if (this.codeCooldown <= 0) {
+          this.clearCooldown()
+          this.stopCooldown()
+        }
+      }
+      tick()
+      if (this.codeCooldown > 0) this.codeCooldownTimer = setInterval(tick, 1000)
     },
 
     stopCooldown() {
@@ -621,7 +648,53 @@ export default {
         clearInterval(this.codeCooldownTimer)
         this.codeCooldownTimer = null
       }
-      if (this.codeCooldown < 0) this.codeCooldown = 0
+      this.codeCooldown = 0
+    },
+
+    restoreCooldown() {
+      if (!this.isEmailCodeMode()) {
+        this.stopCooldown()
+        return
+      }
+      const key = this.cooldownStorageKey()
+      if (!key) {
+        this.stopCooldown()
+        return
+      }
+      const nextSendAt = Number(localStorage.getItem(key) || 0)
+      if (nextSendAt > Math.floor(Date.now() / 1000)) {
+        this.startCooldownUntil(nextSendAt)
+      } else {
+        this.clearCooldown(key)
+        this.stopCooldown()
+      }
+    },
+
+    persistCooldown(nextSendAt) {
+      const key = this.cooldownStorageKey()
+      if (key) localStorage.setItem(key, String(Math.floor(Number(nextSendAt))))
+    },
+
+    clearCooldown(key = this.cooldownStorageKey()) {
+      if (key) localStorage.removeItem(key)
+    },
+
+    cooldownStorageKey() {
+      const email = (this.currentEmail || '').trim().toLowerCase()
+      return email ? `${CODE_COOLDOWN_STORAGE_PREFIX}:${email}` : ''
+    },
+
+    isEmailCodeMode() {
+      return this.authMode === 'register' || this.loginMethod === 'email'
+    },
+
+    getRetryAfter(error) {
+      const details = error?.details || error?.response?.error?.details || {}
+      const now = Math.floor(Date.now() / 1000)
+      const nextSendAt = Number(details.nextSendAt || 0)
+      if (nextSendAt > now) return { seconds: Math.ceil(nextSendAt - now), nextSendAt }
+      const retryAfter = Number(details.retryAfter || 0)
+      return retryAfter > 0 ? { seconds: Math.ceil(retryAfter), nextSendAt: now + Math.ceil(retryAfter) } : { seconds: 0, nextSendAt: 0 }
     },
 
     // ----- 账号面板 -----
@@ -1070,7 +1143,7 @@ export default {
 }
 .cloud-code-row .btn {
   white-space: nowrap;
-  min-width: 96px;
+  min-width: 112px;
 }
 
 /* Turnstile 人机验证 */
