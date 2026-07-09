@@ -34,13 +34,77 @@ const LEGACY_DEFAULTS = {
     softwareDescription: '一站式软件项目交付文档生成工具，支持软著源程序、接口文档、数据库文档、需求规格说明书、设计说明书、运维手册、测试文档和 PPT 等材料生成。',
 }
 
+const AUTO_DETECTED_PROFILE_FIELDS = [
+    'softwareName',
+    'shortName',
+    'version',
+    'softwareCategory',
+    'softwareType',
+    'applyScope',
+    'programmingLanguages',
+    'operatingPlatform',
+    'softwareDescription',
+    'developmentTools',
+    'developmentHardwareEnv',
+    'runtimeHardwareEnv',
+    'developmentSoftwareEnv',
+    'runtimeSoftwareEnv',
+    'technicalFeatures',
+    'sourceProjectName',
+    'profileAutoFilledAt',
+]
+
+const APPLICANT_CONTEXT_FIELDS = [
+    'ownerName',
+    'applicantName',
+    'applicantIdNo',
+    'contactName',
+    'contactPhone',
+    'contactEmail',
+    'contactAddress',
+]
+
 export function stripLegacyCopyrightDefaults(profile = {}) {
     const next = { ...(profile || {}) }
     for (const [key, legacyValue] of Object.entries(LEGACY_DEFAULTS)) {
         if (next[key] === legacyValue) next[key] = ''
     }
+    if (isUnmarkedAutoDetectedProfile(next)) {
+        for (const key of AUTO_DETECTED_PROFILE_FIELDS) next[key] = ''
+        next.sourceProjectDirs = []
+    }
+    if (!Array.isArray(next.sourceProjectDirs)) next.sourceProjectDirs = []
     if (!next.documentTypeId) next.documentTypeId = 'user-manual'
     return next
+}
+
+function isUnmarkedAutoDetectedProfile(profile) {
+    const hasSource = hasText(profile.sourceProjectName)
+        || hasText(profile.profileAutoFilledAt)
+        || (Array.isArray(profile.sourceProjectDirs) && profile.sourceProjectDirs.length > 0)
+    if (hasSource) return false
+    if (APPLICANT_CONTEXT_FIELDS.some(key => hasText(profile[key]))) return false
+
+    const nameFromPackage = hasText(profile.softwareName)
+        && hasText(profile.shortName)
+        && profile.softwareName === `${profile.shortName}软件`
+    if (!nameFromPackage) return false
+
+    const scanHintCount = [
+        profile.version,
+        profile.programmingLanguages,
+        profile.softwareType,
+        profile.applyScope,
+        profile.operatingPlatform,
+        profile.developmentTools,
+        profile.developmentSoftwareEnv,
+        profile.runtimeSoftwareEnv,
+    ].filter(hasText).length
+    return scanHintCount >= 3
+}
+
+function hasText(value) {
+    return typeof value === 'string' ? value.trim().length > 0 : Boolean(value)
 }
 
 export function inferCopyrightProfileFromScan(scanResult = {}, currentProfile = {}) {
@@ -76,6 +140,10 @@ export function inferCopyrightProfileFromScan(scanResult = {}, currentProfile = 
     if (tech.features.length || business.modules?.length || business.pages?.length || business.apiEndpoints?.length) {
         partial.technicalFeatures = buildTechnicalFeatures(scanResult, tech)
     }
+    const sourceDirs = (scanResult.trees || []).map(tree => tree.path || tree.name).filter(Boolean)
+    partial.sourceProjectDirs = sourceDirs
+    partial.sourceProjectName = projectMeta.name || sourceDirs.map(x => String(x).split(/[\\/]/).pop()).filter(Boolean)[0] || ''
+    partial.profileAutoFilledAt = new Date().toISOString()
 
     return mergeInferredProfile(currentProfile, partial)
 }
@@ -84,7 +152,11 @@ function mergeInferredProfile(currentProfile, inferred) {
     const next = { ...stripLegacyCopyrightDefaults(currentProfile) }
     for (const [key, value] of Object.entries(inferred)) {
         if (!value) continue
-        if (!next[key] || LEGACY_DEFAULTS[key] === next[key]) next[key] = value
+        if (Array.isArray(value)) {
+            next[key] = value
+        } else if (!next[key] || LEGACY_DEFAULTS[key] === next[key] || ['sourceProjectName', 'profileAutoFilledAt'].includes(key)) {
+            next[key] = value
+        }
     }
     return next
 }

@@ -9,6 +9,10 @@
     />
     <!-- 头部操作栏 -->
     <div class="view-header">
+      <div class="header-title">
+        <Plug :size="16" />
+        <span>接口文档</span>
+      </div>
       <div class="header-actions">
         <span v-if="parsing" style="display:flex;align-items:center;gap:6px;color:var(--text-secondary);font-size:12px;">
           <span class="spinner"></span> {{ parseProgress }}

@@ -9,6 +9,10 @@
     />
     <!-- 头部操作栏 -->
     <div class="view-header">
+      <div class="header-title">
+        <FileCode :size="16" />
+        <span>软著代码</span>
+      </div>
       <div class="header-actions">
         <span v-if="generating" style="display:flex;align-items:center;gap:6px;color:var(--text-secondary);font-size:12px;">
           <span class="spinner"></span> 生成中...
@@ -306,7 +310,7 @@ import { calcMaxLineWidth } from '../core/line-wrapper.js'
 import { smartSortFiles } from '../core/file-sorter.js'
 import GuideTour from '../components/GuideTour.vue'
 import {
-  FolderOpen, Save, Pin, Plus, X, FileText, Search,
+  FolderOpen, Save, Pin, Plus, X, FileCode, FileText, Search,
   Lightbulb, Ban, Eraser, Eye, RefreshCw, Check, FileDown,
   ChevronDown, Shuffle
 } from 'lucide-vue-next'
@@ -333,7 +337,7 @@ export default {
   },
   components: {
     GuideTour,
-    FolderOpen, Save, Pin, Plus, X, FileText, Search,
+    FolderOpen, Save, Pin, Plus, X, FileCode, FileText, Search,
     Lightbulb, Ban, Eraser, Eye, RefreshCw, Check, FileDown,
     ChevronDown, Shuffle
   },

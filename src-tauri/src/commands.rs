@@ -1,5 +1,8 @@
 use crate::scanner;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use tokio::sync::watch;
 
 #[derive(Debug, Serialize)]
 pub struct ScanResult {
@@ -202,6 +205,7 @@ pub struct LlmRequest {
     pub is_anthropic: Option<bool>,
     pub anthropic_beta: Option<String>,
     pub client_id: Option<String>,
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -211,6 +215,62 @@ pub struct LlmResponse {
     pub status: u16,
     pub body: String,
     pub error: Option<String>,
+}
+
+type LlmCancelMap = Mutex<HashMap<String, watch::Sender<bool>>>;
+static LLM_CANCEL_MAP: OnceLock<LlmCancelMap> = OnceLock::new();
+
+fn llm_cancel_map() -> &'static LlmCancelMap {
+    LLM_CANCEL_MAP.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn register_llm_cancel(request_id: Option<&str>) -> Option<(String, watch::Receiver<bool>)> {
+    let request_id = request_id?.trim();
+    if request_id.is_empty() {
+        return None;
+    }
+    let (tx, rx) = watch::channel(false);
+    if let Ok(mut pending) = llm_cancel_map().lock() {
+        pending.insert(request_id.to_string(), tx);
+        Some((request_id.to_string(), rx))
+    } else {
+        None
+    }
+}
+
+fn unregister_llm_cancel(request_id: &str) {
+    if let Ok(mut pending) = llm_cancel_map().lock() {
+        pending.remove(request_id);
+    }
+}
+
+async fn wait_llm_cancelled(rx: &mut watch::Receiver<bool>) {
+    if *rx.borrow() {
+        return;
+    }
+    while rx.changed().await.is_ok() {
+        if *rx.borrow() {
+            return;
+        }
+    }
+}
+
+#[tauri::command]
+pub fn llm_cancel_request(request_id: String) -> bool {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return false;
+    }
+    let sender = llm_cancel_map()
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.remove(request_id));
+    if let Some(sender) = sender {
+        let _ = sender.send(true);
+        true
+    } else {
+        false
+    }
 }
 
 /// 通过 Rust 后端直接发起 LLM API 请求（绕过前端 fetch 的 header 限制）
@@ -277,7 +337,26 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
         }
     }
 
-    let resp = match builder.body(req.body).send().await {
+    let mut cancel_registration = register_llm_cancel(req.request_id.as_deref());
+    let resp_result = if let Some((request_id, cancel_rx)) = cancel_registration.as_mut() {
+        let send_future = builder.body(req.body).send();
+        tokio::select! {
+            _ = wait_llm_cancelled(cancel_rx) => {
+                unregister_llm_cancel(request_id.as_str());
+                return LlmResponse {
+                    success: false,
+                    status: 499,
+                    body: String::new(),
+                    error: Some("请求已取消".to_string()),
+                };
+            }
+            result = send_future => result,
+        }
+    } else {
+        builder.body(req.body).send().await
+    };
+
+    let resp = match resp_result {
         Ok(r) => r,
         Err(e) => {
             return LlmResponse {
@@ -290,7 +369,27 @@ pub async fn llm_request(req: LlmRequest) -> LlmResponse {
     };
 
     let status = resp.status().as_u16();
-    let body = resp.text().await.unwrap_or_default();
+    let text_result = if let Some((request_id, cancel_rx)) = cancel_registration.as_mut() {
+        let text_future = resp.text();
+        tokio::select! {
+            _ = wait_llm_cancelled(cancel_rx) => {
+                unregister_llm_cancel(request_id.as_str());
+                return LlmResponse {
+                    success: false,
+                    status: 499,
+                    body: String::new(),
+                    error: Some("请求已取消".to_string()),
+                };
+            }
+            result = text_future => result,
+        }
+    } else {
+        resp.text().await
+    };
+    if let Some((request_id, _)) = cancel_registration.as_ref() {
+        unregister_llm_cancel(request_id.as_str());
+    }
+    let body = text_result.unwrap_or_default();
     let success = status >= 200 && status < 300;
     let error = if success {
         None

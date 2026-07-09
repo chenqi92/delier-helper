@@ -9,6 +9,10 @@
     />
     <!-- 头部操作栏 -->
     <div class="view-header">
+      <div class="header-title">
+        <ClipboardCheck :size="16" />
+        <span>测试用例</span>
+      </div>
       <div class="header-actions">
         <span v-if="scanning" style="display:flex;align-items:center;gap:6px;color:var(--text-secondary);font-size:12px;">
           <span class="spinner"></span> 扫描中...
@@ -152,7 +156,7 @@
             </div>
             <div class="form-group">
               <label class="form-label">版本号</label>
-              <input type="text" class="form-input" v-model="docInfo.version" placeholder="V1.0" />
+              <input type="text" class="form-input" v-model="docInfo.version" placeholder="例：1.0.0" />
             </div>
             <div class="form-group">
               <label class="form-label">编写人</label>
@@ -260,7 +264,7 @@ export default {
       docInfo: {
         docTitle: '测试用例文档',
         projectName: '',
-        version: 'V1.0',
+        version: '',
         author: '',
         organization: '',
         date: new Date().toISOString().slice(0, 10),
@@ -292,7 +296,10 @@ export default {
     }
     this.syncSelectionFromStore()
     loadPageConfig('tc-doc-info').then(saved => {
-      if (saved) Object.assign(this.docInfo, saved)
+      if (saved) {
+        if (saved.version === 'V1.0') saved.version = ''
+        Object.assign(this.docInfo, saved)
+      }
     }).catch(() => {})
     getSetting('guide-finished-tc', false).then(v => { if (v) this.guideFinished = true }).catch(() => {})
   },

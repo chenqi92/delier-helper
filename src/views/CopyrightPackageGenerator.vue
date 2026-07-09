@@ -9,20 +9,60 @@
         <button class="btn btn-primary btn-sm" @click="exportPackage" :disabled="exporting">
           <FileArchive :size="14" /> {{ exporting ? '导出中...' : '导出整包 ZIP' }}
         </button>
-        <button class="btn btn-secondary btn-sm" @click="exportDoc('application-info')">
-          <FileText :size="14" /> 申请信息
+        <button class="btn btn-secondary btn-sm" @click="openPreviewDialog('application')">
+          <FileText :size="14" /> 查看申请信息
         </button>
-        <button class="btn btn-secondary btn-sm" @click="exportDoc('material-checklist')">
-          <ListChecks :size="14" /> 材料清单
-        </button>
-        <button class="btn btn-secondary btn-sm" @click="exportChecklistMarkdown">
-          <FileDown :size="14" /> 清单 MD
+        <button class="btn btn-secondary btn-sm" @click="openPreviewDialog('checklist')">
+          <ListChecks :size="14" /> 查看材料清单
         </button>
       </div>
     </div>
 
     <div class="app-body">
       <aside class="config-panel">
+        <div class="card">
+          <div class="card-header">
+            <h3><FolderOpen :size="14" /> 开发目录</h3>
+            <span v-if="scanning" class="package-scan-status"><span class="spinner"></span> 扫描中...</span>
+            <span v-else-if="scanResult" class="package-scan-ready"><Check :size="12" /> {{ scanResult.stats.totalFiles }} 个文件</span>
+          </div>
+          <div class="card-body">
+            <div v-if="projectDirsSafe.length" class="dir-list">
+              <div v-for="(dir, idx) in projectDirsSafe" :key="dir" class="dir-item">
+                <div class="dir-item-header">
+                  <span class="dir-path" :title="dir">{{ dir }}</span>
+                  <button class="btn btn-danger btn-sm btn-icon" @click="removeDir(idx)" :disabled="scanning">
+                    <X :size="14" />
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="package-dir-actions">
+              <button class="btn btn-primary btn-sm" @click="addProjectDir" :disabled="scanning">
+                <FolderOpen :size="14" /> {{ projectDirsSafe.length ? '添加目录' : '选择目录' }}
+              </button>
+              <button class="btn btn-secondary btn-sm" @click="startScan" :disabled="projectDirsSafe.length === 0 || scanning">
+                <Search :size="14" /> {{ scanning ? '扫描中...' : '扫描并自动填充' }}
+              </button>
+            </div>
+            <button class="btn btn-secondary btn-sm package-full-btn" @click="aiFillProfile" :disabled="!scanResult || aiProcessing">
+              <Bot :size="14" /> AI 补全申请信息
+            </button>
+            <button class="btn btn-secondary btn-sm package-full-btn" @click="clearDetectedProfile">
+              <RotateCcw :size="14" /> 清空扫描信息
+            </button>
+            <div v-if="profile.sourceProjectName || profileSourceDirsText" class="package-source-note">
+              信息来源：{{ profile.sourceProjectName || profileSourceDirsText }}
+            </div>
+            <div v-if="recentProjectsSafe.length > 0 && projectDirsSafe.length === 0" class="recent-dirs package-recent-dirs">
+              <span class="recent-dirs-label">最近使用</span>
+              <button v-for="rp in recentProjectsSafe" :key="rp" class="recent-dir-item" @click="addRecentDir(rp)" :title="rp">
+                {{ rp.split(/[\\/]/).pop() || rp }}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-header"><h3><BadgeInfo :size="14" /> 软件信息</h3></div>
           <div class="card-body">
@@ -54,11 +94,13 @@
                   <option value="">扫描后自动识别或手动选择</option>
                   <option v-for="scope in applyScopeOptions" :key="scope.value" :value="scope.value">{{ scope.label }}</option>
                 </select>
+                <div class="form-help">用于判断本次申报的软件形态，并影响运行平台、材料清单提示和软件文档生成侧重点。</div>
               </div>
             </div>
             <div class="form-group">
               <label class="form-label">主要开发语言/技术</label>
               <input class="form-input" v-model="profile.programmingLanguages" />
+              <div class="form-help">用于申请信息表、技术特点说明和软件文档上下文；扫描目录后会按文件类型自动识别。</div>
             </div>
             <div class="form-group">
               <label class="form-label">运行平台</label>
@@ -390,6 +432,80 @@
         </div>
       </main>
     </div>
+
+    <div v-if="previewDialog" class="package-modal-backdrop" @click.self="closePreviewDialog">
+      <div class="package-modal" role="dialog" aria-modal="true" :aria-label="previewDialogTitle">
+        <div class="package-modal-header">
+          <div>
+            <h3>
+              <component :is="previewDialog === 'application' ? 'FileText' : 'ListChecks'" :size="16" />
+              {{ previewDialogTitle }}
+            </h3>
+            <p>{{ previewDialogDescription }}</p>
+          </div>
+          <button class="btn btn-secondary btn-sm btn-icon" @click="closePreviewDialog" title="关闭">
+            <X :size="14" />
+          </button>
+        </div>
+
+        <div class="package-modal-body">
+          <template v-if="previewDialog === 'application'">
+            <div class="package-note package-modal-note">
+              官方系统仍需在线填写并打印签章；这里用于填报前核对，必要时可导出 Word 或 JSON 留档。
+            </div>
+            <div v-for="group in applicationPreviewGroups" :key="group.title" class="preview-group">
+              <h4>{{ group.title }}</h4>
+              <div class="preview-field-grid">
+                <div v-for="field in group.fields" :key="`${group.title}-${field.label}`" class="preview-field">
+                  <span>{{ field.label }}</span>
+                  <strong>{{ field.value || '待填写' }}</strong>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <template v-else>
+            <div class="package-note package-modal-note">
+              材料清单用于内部核对和归档，不是官方系统要求单独提交的材料；Word 和 MD 内容同源，MD 只是轻量文本格式。
+            </div>
+            <div class="material-list">
+              <div v-for="item in materialItems" :key="`preview-${item.id}`" class="material-row">
+                <div class="material-main">
+                  <div class="material-title">
+                    <span>{{ item.title }}</span>
+                    <span :class="['badge', item.required ? 'badge-warning' : 'badge-primary']">{{ item.required ? '必需' : '按情况' }}</span>
+                  </div>
+                  <div class="material-meta">
+                    <span>{{ item.source }}</span>
+                    <span :class="statusClass(item.status)">{{ statusText(item.status) }}</span>
+                  </div>
+                  <p>{{ item.note }}</p>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <div class="package-modal-footer">
+          <template v-if="previewDialog === 'application'">
+            <button class="btn btn-secondary btn-sm" @click="exportProfileJson">
+              <Braces :size="14" /> 导出 JSON
+            </button>
+            <button class="btn btn-primary btn-sm" @click="exportDoc('application-info')">
+              <FileDown :size="14" /> 导出 Word
+            </button>
+          </template>
+          <template v-else>
+            <button class="btn btn-secondary btn-sm" @click="exportChecklistMarkdown">
+              <FileDown :size="14" /> 导出 MD
+            </button>
+            <button class="btn btn-primary btn-sm" @click="exportDoc('material-checklist')">
+              <FileDown :size="14" /> 导出 Word
+            </button>
+          </template>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -444,6 +560,18 @@ const PROFILE_KEY = COPYRIGHT_PROFILE_KEY
 const SOFTWARE_DOC_KEY = SOFTWARE_DOC_CONFIG_KEY
 const SECTION_TEMPERATURE = { diagram: 0.1, table: 0.35, text: 0.55 }
 
+function parseJsonObject(text) {
+  if (!text) return {}
+  const cleaned = String(text).trim().replace(/^```json\s*/i, '').replace(/```$/i, '').trim()
+  try {
+    return JSON.parse(cleaned)
+  } catch (e) {
+    const match = cleaned.match(/\{[\s\S]*\}/)
+    if (!match) return {}
+    try { return JSON.parse(match[0]) } catch { return {} }
+  }
+}
+
 export default {
   name: 'CopyrightPackageGenerator',
   components: {
@@ -472,6 +600,7 @@ export default {
       selectedProviderId: null,
       selectedModelId: null,
       exporting: false,
+      previewDialog: '',
       loaded: false,
     }
   },
@@ -488,6 +617,11 @@ export default {
     recentProjectsSafe() {
       return Array.isArray(this.recentProjects) ? this.recentProjects : []
     },
+    profileSourceDirsText() {
+      return Array.isArray(this.profile.sourceProjectDirs)
+        ? this.profile.sourceProjectDirs.map(dir => String(dir).split(/[\\/]/).pop()).filter(Boolean).join('、')
+        : ''
+    },
     softwareDocSectionsSafe() {
       return Array.isArray(this.softwareDocSections) ? this.softwareDocSections : []
     },
@@ -500,6 +634,86 @@ export default {
     },
     softwareDocInfo() {
       return createCopyrightSoftwareDocInfo(this.profile, this.profile.documentTypeId)
+    },
+    previewDialogTitle() {
+      return this.previewDialog === 'application' ? '申请信息核对' : '软著材料清单'
+    },
+    previewDialogDescription() {
+      return this.previewDialog === 'application'
+        ? '按官方申请表常用字段汇总，便于填报前核对。'
+        : '按当前软件类型、主体和权属信息生成的准备清单。'
+    },
+    applicationPreviewGroups() {
+      const p = this.exportProfile()
+      const applyScopeText = this.applyScopeOptions.find(item => item.value === p.applyScope)?.label || p.applyScope
+      const ownerTypeText = {
+        enterprise: '企业法人',
+        individual: '自然人',
+        institution: '事业/社团/其他组织',
+      }[p.ownerType] || p.ownerType
+      const workDescriptionText = {
+        original: '原创',
+        modified: '修改',
+        composed: '合成',
+        translated: '翻译',
+      }[p.workDescription] || p.workDescription
+      const depositText = {
+        general: '一般交存',
+        exception: '例外交存',
+        sealed: '封存',
+      }
+      return [
+        {
+          title: '软件信息',
+          fields: [
+            { label: '软件全称', value: p.softwareName },
+            { label: '软件简称', value: p.shortName },
+            { label: '版本号', value: p.version },
+            { label: '软件类型', value: p.softwareType },
+            { label: '申请范围', value: applyScopeText },
+            { label: '运行平台', value: p.operatingPlatform },
+          ],
+        },
+        {
+          title: '开发与权利',
+          fields: [
+            { label: '开发方式', value: this.developmentModeText },
+            { label: '权利取得', value: this.rightText },
+            { label: '软件作品说明', value: workDescriptionText },
+            { label: '权利范围', value: p.rightsScope === 'all' ? '全部权利' : (p.rightsScope === 'partial' ? '部分权利' : p.rightsScope) },
+            { label: '开发开始日期', value: p.developmentStartDate },
+            { label: '开发完成日期', value: p.completionDate },
+            { label: '发表状态', value: p.isPublished ? `已发表${p.firstPublishDate ? `（${p.firstPublishDate}）` : ''}` : '未发表' },
+            { label: '升级版本', value: p.isUpgrade ? (p.originalRegistrationNo || '是，原登记号待填写') : '否' },
+          ],
+        },
+        {
+          title: '申请主体',
+          fields: [
+            { label: '著作权人', value: p.ownerName },
+            { label: '主体类型', value: ownerTypeText },
+            { label: '证件/统一社会信用代码', value: p.applicantIdNo },
+            { label: '申请人', value: p.applicantName },
+            { label: '联系人', value: p.contactName },
+            { label: '联系电话', value: p.contactPhone },
+            { label: '电子邮箱', value: p.contactEmail },
+            { label: '联系地址', value: p.contactAddress },
+          ],
+        },
+        {
+          title: '鉴别材料',
+          fields: [
+            { label: '主要语言/技术', value: p.programmingLanguages },
+            { label: '开发工具', value: p.developmentTools },
+            { label: '源程序代码量', value: p.sourceLineCount },
+            { label: '源程序页数', value: p.sourcePageCount },
+            { label: '文档名称/类型', value: p.documentName },
+            { label: '文档页数', value: p.documentPageCount },
+            { label: '程序交存方式', value: depositText[p.programDepositType] || p.programDepositType },
+            { label: '文档交存方式', value: depositText[p.documentDepositType] || p.documentDepositType },
+          ],
+        },
+      ]
     },
     softwareDocLeafSections() {
       return getEnabledLeafSections(this.softwareDocSectionsSafe)
@@ -569,6 +783,7 @@ export default {
     }
     this.profile.documentTypeId = this.profile.documentTypeId || 'user-manual'
     this.syncDocumentNameFromType(false)
+    this.syncProjectDirsFromProfile()
     const savedDoc = await loadPageConfig(SOFTWARE_DOC_KEY).catch(() => null)
     if (Array.isArray(savedDoc?.sections) && savedDoc.sections.length && savedDoc.documentTypeId === this.profile.documentTypeId) {
       this.softwareDocSections = savedDoc.sections
@@ -585,12 +800,19 @@ export default {
     this.reloadSharedData().catch(() => {})
   },
   methods: {
+    openPreviewDialog(type) {
+      this.previewDialog = type
+    },
+    closePreviewDialog() {
+      this.previewDialog = ''
+    },
     async reloadSharedData() {
       const saved = await loadPageConfig(PROFILE_KEY).catch(() => null)
       if (saved) {
         this.profile = { ...createDefaultCopyrightProfile(), ...stripLegacyCopyrightDefaults(saved) }
         this.profile.documentTypeId = this.profile.documentTypeId || 'user-manual'
         this.syncDocumentNameFromType(false)
+        this.syncProjectDirsFromProfile()
       }
       const savedDoc = await loadPageConfig(SOFTWARE_DOC_KEY).catch(() => null)
       if (Array.isArray(savedDoc?.sections) && savedDoc.sections.length && savedDoc.documentTypeId === this.profile.documentTypeId) {
@@ -631,6 +853,12 @@ export default {
       this.profile.documentName = option.label
       if (persist) this.persistProfile()
     },
+    syncProjectDirsFromProfile() {
+      const dirs = Array.isArray(this.profile.sourceProjectDirs)
+        ? this.profile.sourceProjectDirs.filter(Boolean)
+        : []
+      if (dirs.length && this.projectDirsSafe.length === 0) this.projectDirs = [...dirs]
+    },
     onSoftwareDocTypeChange() {
       if (this.aiProcessing) {
         this.showToast('AI 正在生成中，请先停止生成再切换文档类型', 'warning')
@@ -653,7 +881,13 @@ export default {
     },
     removeDir(index) {
       this.projectDirs.splice(index, 1)
-      if (this.projectDirs.length === 0) this.scanResult = null
+      if (this.projectDirs.length === 0) {
+        this.scanResult = null
+        this.profile.sourceProjectDirs = []
+        this.profile.sourceProjectName = ''
+        this.profile.profileAutoFilledAt = ''
+        this.persistProfile()
+      }
     },
     async startScan() {
       if (this.projectDirs.length === 0) {
@@ -681,6 +915,101 @@ export default {
       this.profile = inferCopyrightProfileFromScan(this.scanResult, this.profile)
       this.syncDocumentNameFromType(false)
       this.persistProfile()
+    },
+    clearDetectedProfile() {
+      const keys = [
+        'softwareName', 'shortName', 'version', 'softwareCategory', 'softwareType',
+        'applyScope', 'programmingLanguages', 'operatingPlatform', 'softwareDescription',
+        'developmentTools', 'developmentHardwareEnv', 'runtimeHardwareEnv',
+        'developmentSoftwareEnv', 'runtimeSoftwareEnv', 'technicalFeatures',
+        'sourceProjectName', 'profileAutoFilledAt',
+      ]
+      for (const key of keys) this.profile[key] = ''
+      this.profile.sourceProjectDirs = []
+      this.persistProfile()
+      this.showToast('已清空扫描识别的软件信息', 'success')
+    },
+    async aiFillProfile() {
+      if (this.aiProcessing) return
+      if (!this.scanResult) {
+        this.showToast('请先选择开发目录并扫描代码库', 'warning')
+        return
+      }
+      const provider = this.requireProvider()
+      if (!provider) return
+      const config = getResolvedConfig(provider, this.selectedModelId)
+      if (!config?.model) {
+        this.showToast('请选择模型', 'warning')
+        return
+      }
+
+      const controller = createAiController()
+      this.aiProcessing = true
+      this.aiController = controller
+      this.aiProgressText = 'AI 正在提取申请信息...'
+      this.addLog('[进行] AI 提取软著申请基础信息')
+      try {
+        const base = buildContextSummary(this.scanResult, this.softwareDocInfo, this.referenceFiles)
+        const messages = [
+          {
+            role: 'system',
+            content: '你负责从项目代码目录、README、配置文件、路由、接口和页面文案中提取软件著作权申请填报所需的基础信息。只输出 JSON，不要输出解释。',
+          },
+          {
+            role: 'user',
+            content: `${base}
+
+请提取以下 JSON 字段，无法从材料判断时填空字符串：
+{
+  "softwareName": "软件全称，建议以“软件”结尾",
+  "shortName": "软件简称",
+  "version": "版本号，不要自行编造",
+  "softwareCategory": "软件分类，例如应用软件、系统软件、嵌入式软件等",
+  "applyScope": "desktop|web|mobile-app|mini-program|backend-service|cloud|multi-terminal|embedded 之一",
+  "softwareType": "中文软件类型",
+  "operatingPlatform": "运行平台",
+  "programmingLanguages": "主要语言/技术，顿号分隔",
+  "developmentTools": "开发工具/构建工具，顿号分隔",
+  "developmentSoftwareEnv": "开发软件环境",
+  "runtimeSoftwareEnv": "运行软件环境",
+  "technicalFeatures": "技术特点，80-180字，必须基于代码证据",
+  "softwareDescription": "软件功能简介，80-180字，必须基于代码证据"
+}`,
+          },
+        ]
+        const response = await callLlm(config, messages, {
+          maxTokens: Math.min(config.maxOutputTokens || 4096, 4096),
+          temperature: 0.2,
+          jsonMode: true,
+          signal: controller.signal,
+        })
+        const parsed = parseJsonObject(response)
+        const allowed = [
+          'softwareName', 'shortName', 'version', 'softwareCategory', 'applyScope',
+          'softwareType', 'operatingPlatform', 'programmingLanguages', 'developmentTools',
+          'developmentSoftwareEnv', 'runtimeSoftwareEnv', 'technicalFeatures', 'softwareDescription',
+        ]
+        for (const key of allowed) {
+          const value = parsed[key]
+          if (typeof value === 'string' && value.trim() && !this.profile[key]) this.profile[key] = value.trim()
+        }
+        this.profile.sourceProjectDirs = [...this.projectDirsSafe]
+        this.profile.sourceProjectName = this.profile.sourceProjectName || this.projectDirsSafe[0]?.split(/[\\/]/).pop() || ''
+        this.profile.profileAutoFilledAt = new Date().toISOString()
+        this.syncDocumentNameFromType(false)
+        this.persistProfile()
+        this.addLog('[完成] AI 申请信息提取完成', 'success')
+        this.showToast('申请信息已补全', 'success')
+      } catch (e) {
+        if (e?.name === 'AbortError' || controller.cancelled) this.showToast('已停止生成', 'info')
+        else this.showToast('AI 补全失败: ' + String(e), 'error')
+      } finally {
+        if (this.aiController === controller) {
+          this.aiProcessing = false
+          this.aiProgressText = ''
+          this.aiController = null
+        }
+      }
     },
     onUpdateReferenceFiles(files) {
       this.referenceFiles = files
@@ -1066,6 +1395,42 @@ export default {
   margin: 8px 0;
 }
 
+.form-help {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.package-dir-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.package-dir-actions .btn {
+  min-width: 0;
+}
+
+.package-full-btn {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.package-source-note {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+  user-select: text;
+}
+
 .package-summary-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1198,6 +1563,128 @@ export default {
 .export-tile:hover {
   border-color: var(--border-hover);
   background: var(--bg-hover);
+}
+
+.package-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.package-modal {
+  width: min(920px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  box-shadow: 0 20px 60px rgba(15, 23, 42, 0.28);
+  overflow: hidden;
+}
+
+.package-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-surface);
+}
+
+.package-modal-header h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.package-modal-header p {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.package-modal-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+
+.package-modal-note {
+  margin-top: 0;
+  margin-bottom: 12px;
+}
+
+.preview-group {
+  margin-top: 12px;
+}
+
+.preview-group:first-of-type {
+  margin-top: 0;
+}
+
+.preview-group h4 {
+  margin: 0 0 8px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.preview-field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.preview-field {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-input);
+}
+
+.preview-field span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.preview-field strong {
+  display: block;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.4;
+  word-break: break-word;
+  user-select: text;
+}
+
+.package-modal .material-row {
+  align-items: flex-start;
+}
+
+.package-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color);
+  background: var(--bg-surface);
 }
 
 .software-doc-layout {
@@ -1364,6 +1851,21 @@ export default {
   }
   .software-doc-layout {
     grid-template-columns: 1fr;
+  }
+  .preview-field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .package-modal-backdrop {
+    padding: 12px;
+  }
+  .package-modal-header,
+  .package-modal-body,
+  .package-modal-footer {
+    padding-left: 12px;
+    padding-right: 12px;
   }
 }
 </style>

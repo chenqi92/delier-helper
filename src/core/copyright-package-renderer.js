@@ -97,6 +97,9 @@ export function createDefaultCopyrightProfile() {
         hasCooperationContract: false,
         hasTransferProof: false,
         softwareDescription: '',
+        sourceProjectDirs: [],
+        sourceProjectName: '',
+        profileAutoFilledAt: '',
         notes: '',
     }
 }

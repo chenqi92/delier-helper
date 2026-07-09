@@ -1,6 +1,10 @@
 <template>
   <div class="software-doc-view">
     <div class="view-header">
+      <div class="header-title">
+        <FileText :size="16" />
+        <span>软件文档</span>
+      </div>
       <div class="header-actions">
         <span v-if="scanning" class="software-doc-status"><span class="spinner"></span> 扫描中...</span>
         <span v-else-if="scanResult" class="software-doc-ready">
@@ -39,6 +43,51 @@
     <div class="app-body">
       <aside class="config-panel">
         <div class="card">
+          <div class="card-header">
+            <h3><FolderOpen :size="14" /> 开发目录</h3>
+            <span v-if="scanning" class="software-doc-status"><span class="spinner"></span> 扫描中...</span>
+            <span v-else-if="scanResult" class="software-doc-ready"><Check :size="12" /> {{ scanResult.stats.totalFiles }} 个文件</span>
+          </div>
+          <div class="card-body">
+            <div v-for="(dir, idx) in projectDirs" :key="dir" class="dir-item">
+              <div class="dir-item-header">
+                <span class="dir-path" :title="dir">{{ dir }}</span>
+                <button class="btn btn-danger btn-sm btn-icon" @click="removeDir(idx)" :disabled="aiProcessing || scanning">
+                  <X :size="14" />
+                </button>
+              </div>
+            </div>
+            <div class="software-doc-dir-actions">
+              <button class="btn btn-primary btn-sm" @click="addProjectDir" :disabled="aiProcessing || scanning">
+                <FolderOpen :size="14" /> {{ projectDirs.length ? '添加目录' : '选择目录' }}
+              </button>
+              <button
+                class="btn btn-secondary btn-sm"
+                @click="startScan"
+                :disabled="projectDirs.length === 0 || scanning || aiProcessing"
+              >
+                <Search :size="14" /> {{ scanning ? '扫描中...' : '扫描并自动填充' }}
+              </button>
+            </div>
+            <button class="btn btn-secondary btn-sm software-doc-full-btn" @click="aiFillProfile" :disabled="!scanResult || aiProcessing">
+              <Bot :size="14" /> AI 补全软件信息
+            </button>
+            <button class="btn btn-secondary btn-sm software-doc-full-btn" @click="clearDetectedProfile" :disabled="aiProcessing || scanning">
+              <RotateCcw :size="14" /> 清空扫描信息
+            </button>
+            <div v-if="profile.sourceProjectName || profileSourceDirsText" class="software-doc-source-note">
+              信息来源：{{ profile.sourceProjectName || profileSourceDirsText }}
+            </div>
+            <div v-if="recentProjects.length > 0 && projectDirs.length === 0" class="recent-dirs">
+              <span class="recent-dirs-label">最近使用</span>
+              <button v-for="rp in recentProjects" :key="rp" class="recent-dir-item" @click="addRecentDir(rp)" :title="rp">
+                {{ rp.split(/[\\/]/).pop() || rp }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="card-header"><h3><FileText :size="14" /> 文档类型</h3></div>
           <div class="card-body">
             <div class="form-group">
@@ -55,9 +104,6 @@
         <div class="card">
           <div class="card-header">
             <h3><BadgeInfo :size="14" /> 软件信息</h3>
-            <button class="btn btn-secondary btn-sm" @click="aiFillProfile" :disabled="!scanResult || aiProcessing">
-              <Bot :size="12" /> AI 补全
-            </button>
           </div>
           <div class="card-body">
             <div class="form-group">
@@ -80,6 +126,7 @@
                 <option value="">扫描后自动识别或手动选择</option>
                 <option v-for="scope in applyScopeOptions" :key="scope.value" :value="scope.value">{{ scope.label }}</option>
               </select>
+              <div class="form-help">用于判断本次申报的软件形态，并影响运行平台、材料清单提示和软件文档生成侧重点。</div>
             </div>
             <div class="form-group">
               <label class="form-label">软件类型</label>
@@ -91,6 +138,7 @@
             <div class="form-group">
               <label class="form-label">主要语言/技术</label>
               <input class="form-input" v-model="profile.programmingLanguages" />
+              <div class="form-help">用于申请信息表、技术特点说明和软件文档上下文；扫描目录后会按文件类型自动识别。</div>
             </div>
             <div class="form-group">
               <label class="form-label">运行平台</label>
@@ -99,37 +147,6 @@
             <div class="form-group">
               <label class="form-label">功能简介</label>
               <textarea class="form-input software-doc-textarea" v-model="profile.softwareDescription"></textarea>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <div class="card-header"><h3><FolderOpen :size="14" /> 开发目录</h3></div>
-          <div class="card-body">
-            <div v-for="(dir, idx) in projectDirs" :key="dir" class="dir-item">
-              <div class="dir-item-header">
-                <span class="dir-path" :title="dir">{{ dir }}</span>
-                <button class="btn btn-danger btn-sm btn-icon" @click="removeDir(idx)" :disabled="aiProcessing">
-                  <X :size="14" />
-                </button>
-              </div>
-            </div>
-            <button class="btn btn-primary btn-sm software-doc-full-btn" @click="addProjectDir" :disabled="aiProcessing">
-              <FolderOpen :size="14" /> {{ projectDirs.length ? '添加目录' : '选择目录' }}
-            </button>
-            <button
-              v-if="projectDirs.length"
-              class="btn btn-secondary btn-sm software-doc-full-btn"
-              @click="startScan"
-              :disabled="scanning || aiProcessing"
-            >
-              <Search :size="14" /> {{ scanning ? '扫描中...' : '扫描代码库' }}
-            </button>
-            <div v-if="recentProjects.length > 0 && projectDirs.length === 0" class="recent-dirs">
-              <span class="recent-dirs-label">最近使用</span>
-              <button v-for="rp in recentProjects" :key="rp" class="recent-dir-item" @click="addRecentDir(rp)" :title="rp">
-                {{ rp.split(/[\\/]/).pop() || rp }}
-              </button>
             </div>
           </div>
         </div>
@@ -189,7 +206,7 @@
 <script>
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
-import { BadgeInfo, Bot, Check, ChevronRight, FileDown, FileText, FolderOpen, Search, X } from 'lucide-vue-next'
+import { BadgeInfo, Bot, Check, ChevronRight, FileDown, FileText, FolderOpen, RotateCcw, Search, X } from 'lucide-vue-next'
 import { getRecentProjects, loadPageConfig, savePageConfig, saveRecentProject } from '../core/db.js'
 import { scanCodebase, buildContextSummary } from '../core/doc-template/codebase-scanner.js'
 import { renderDocSections } from '../core/doc-template/doc-docx-renderer.js'
@@ -237,7 +254,7 @@ export default {
   name: 'SoftwareDocGenerator',
   components: {
     BadgeInfo, Bot, Check, ChevronRight, FileDown, FileText, FolderOpen,
-    ReferenceFiles, Search, SectionEditor, X,
+    ReferenceFiles, RotateCcw, Search, SectionEditor, X,
   },
   inject: ['showToast', 'globalStore'],
   data() {
@@ -275,6 +292,11 @@ export default {
     },
     docInfo() {
       return createCopyrightSoftwareDocInfo(this.profile, this.profile.documentTypeId)
+    },
+    profileSourceDirsText() {
+      return Array.isArray(this.profile.sourceProjectDirs)
+        ? this.profile.sourceProjectDirs.map(dir => String(dir).split(/[\\/]/).pop()).filter(Boolean).join('、')
+        : ''
     },
     leafSections() {
       return getEnabledLeafSections(this.sections)
@@ -319,6 +341,7 @@ export default {
       const saved = await loadPageConfig(COPYRIGHT_PROFILE_KEY).catch(() => null)
       if (saved) this.profile = { ...createDefaultCopyrightProfile(), ...stripLegacyCopyrightDefaults(saved) }
       this.profile.documentTypeId = this.profile.documentTypeId || 'user-manual'
+      this.syncProjectDirsFromProfile()
       this.syncDocumentNameFromType(false)
     },
     async loadSavedSoftwareDoc() {
@@ -349,6 +372,12 @@ export default {
       this.profile.documentMaterialType = option.label
       this.profile.documentName = option.label
       if (persist) this.persistProfile()
+    },
+    syncProjectDirsFromProfile() {
+      const dirs = Array.isArray(this.profile.sourceProjectDirs)
+        ? this.profile.sourceProjectDirs.filter(Boolean)
+        : []
+      if (dirs.length && this.projectDirs.length === 0) this.projectDirs = [...dirs]
     },
     onDocTypeChange() {
       if (this.aiProcessing) {
@@ -398,7 +427,13 @@ export default {
     },
     removeDir(index) {
       this.projectDirs.splice(index, 1)
-      if (this.projectDirs.length === 0) this.scanResult = null
+      if (this.projectDirs.length === 0) {
+        this.scanResult = null
+        this.profile.sourceProjectDirs = []
+        this.profile.sourceProjectName = ''
+        this.profile.profileAutoFilledAt = ''
+        this.persistProfile()
+      }
     },
     async startScan() {
       if (this.projectDirs.length === 0) {
@@ -426,6 +461,19 @@ export default {
       this.profile = inferCopyrightProfileFromScan(this.scanResult, this.profile)
       this.syncDocumentNameFromType(false)
       this.persistProfile()
+    },
+    clearDetectedProfile() {
+      const keys = [
+        'softwareName', 'shortName', 'version', 'softwareCategory', 'softwareType',
+        'applyScope', 'programmingLanguages', 'operatingPlatform', 'softwareDescription',
+        'developmentTools', 'developmentHardwareEnv', 'runtimeHardwareEnv',
+        'developmentSoftwareEnv', 'runtimeSoftwareEnv', 'technicalFeatures',
+        'sourceProjectName', 'profileAutoFilledAt',
+      ]
+      for (const key of keys) this.profile[key] = ''
+      this.profile.sourceProjectDirs = []
+      this.persistProfile()
+      this.showToast('已清空扫描识别的软件信息', 'success')
     },
     onUpdateReferenceFiles(files) {
       this.referenceFiles = files
@@ -787,9 +835,40 @@ export default {
   line-height: 1.5;
 }
 
+.form-help {
+  margin-top: 5px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+  user-select: text;
+}
+
+.software-doc-dir-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.software-doc-dir-actions .btn {
+  min-width: 0;
+}
+
 .software-doc-full-btn {
   width: 100%;
   margin-top: 6px;
+}
+
+.software-doc-source-note {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1.45;
+  word-break: break-word;
+  user-select: text;
 }
 
 .software-doc-preview-scroll {

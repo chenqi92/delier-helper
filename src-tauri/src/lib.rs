@@ -28,6 +28,7 @@ pub fn run() {
             commands::db_fetch_schema,
             commands::db_fetch_databases,
             commands::llm_request,
+            commands::llm_cancel_request,
             commands::llm_get_request,
             commands::oracle_client_status,
             commands::oracle_client_install,

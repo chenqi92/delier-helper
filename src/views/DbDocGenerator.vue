@@ -9,6 +9,10 @@
     />
     <!-- 头部操作栏 -->
     <div class="view-header">
+      <div class="header-title">
+        <Database :size="16" />
+        <span>数据库文档</span>
+      </div>
       <div class="header-actions">
         <span v-if="loading && schema" style="display:flex;align-items:center;gap:6px;color:var(--text-secondary);font-size:12px;">
           <span class="spinner"></span> {{ loadingText }}

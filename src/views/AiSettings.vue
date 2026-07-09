@@ -2,6 +2,10 @@
   <div style="display:flex;flex-direction:column;height:100%;">
     <!-- 头部操作栏 -->
     <div class="view-header">
+      <div class="header-title">
+        <Bot :size="16" />
+        <span>AI 设置</span>
+      </div>
       <div class="header-actions">
         <span style="font-size:12px;color:var(--text-secondary);">配置大模型 API 密钥和可用模型</span>
       </div>
@@ -112,15 +116,19 @@
 
               <!-- 操作按钮 -->
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px;">
-                <button class="btn btn-secondary btn-sm" @click="doTest" :disabled="testing || !isFormValid">
-                  <span v-if="testing" class="spinner" style="width:12px;height:12px;"></span>
+                <button
+                  :class="['btn', testing ? 'btn-danger' : 'btn-secondary', 'btn-sm']"
+                  @click="testing ? cancelTest() : doTest()"
+                  :disabled="!testing && !isFormValid"
+                >
+                  <CircleStop v-if="testing" :size="14" />
                   <Wifi v-else :size="14" />
-                  {{ testing ? '测试中...' : '测试连接' }}
+                  {{ testing ? '取消测试' : '测试连接' }}
                 </button>
                 <button class="btn btn-primary btn-sm" @click="save" :disabled="!isFormValid">
                   <Save :size="14" /> 保存配置
                 </button>
-                <span v-if="testResult" :style="{ fontSize: '12px', color: testResult.success ? 'var(--success-500)' : 'var(--danger-500)' }">
+                <span v-if="testResult" :style="{ fontSize: '12px', color: resultTextColor(testResult) }">
                   {{ testResult.message }}
                 </span>
               </div>
@@ -206,13 +214,12 @@
                       <div style="display:flex;gap:2px;align-items:center;">
                         <button
                           class="ai-cfg-act-btn"
-                          :class="{ 'ai-cfg-ok': m._testOk === true, 'ai-cfg-fail': m._testOk === false }"
-                          @click="testSingleModel(idx)"
-                          :disabled="m._testing"
-                          :title="m._testOk === true ? '测试成功' : m._testOk === false ? '测试失败: ' + (m._testMsg || '') : '测试连接'"
+                          :class="{ 'ai-cfg-ok': m._testOk === true, 'ai-cfg-fail': m._testOk === false, 'ai-cfg-cancel': m._testing }"
+                          @click="m._testing ? cancelSingleModelTest(idx) : testSingleModel(idx)"
+                          :title="m._testing ? '取消测试' : m._testOk === true ? '测试成功' : m._testOk === false ? '测试失败: ' + (m._testMsg || '') : '测试连接'"
                         >
                           <Wifi v-if="!m._testing" :size="12" />
-                          <span v-else style="font-size:10px;">...</span>
+                          <CircleStop v-else :size="12" />
                         </button>
                         <button class="ai-cfg-act-btn" @click="editModel(idx)" title="编辑">
                           <Edit3 :size="12" />
@@ -342,7 +349,7 @@
 <script>
 import {
   Bot, Settings, Check, Eye, EyeOff, Wifi, Save,
-  Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical
+  Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical, CircleStop
 } from 'lucide-vue-next'
 import {
   LLM_PROVIDERS, upsertProviderConfig,
@@ -353,7 +360,7 @@ import { refreshProviderConfigs } from '../core/global-store.js'
 
 export default {
   name: 'AiSettings',
-  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical },
+  components: { Bot, Settings, Check, Eye, EyeOff, Wifi, Save, Plus, Trash2, X, Layers, Search, Lightbulb, Edit3, GripVertical, CircleStop },
   inject: ['showToast', 'globalStore'],
   data() {
     return {
@@ -362,6 +369,7 @@ export default {
       form: null,
       showKey: false,
       testing: false,
+      testAbortController: null,
       testResult: null,
       detecting: false,
       detectResult: null,
@@ -375,6 +383,7 @@ export default {
       providerDragOver: -1,
       modelDragIdx: -1,
       modelDragOver: -1,
+      modelTestControllers: {},
     }
   },
   computed: {
@@ -404,6 +413,10 @@ export default {
   async mounted() {
     await this.loadData()
   },
+  beforeUnmount() {
+    this.cancelTest(true)
+    this.cancelAllModelTests(true)
+  },
   methods: {
     async loadData() {
       await refreshProviderConfigs()
@@ -413,6 +426,8 @@ export default {
     },
 
     selectProvider(cfg) {
+      this.cancelTest(true)
+      this.cancelAllModelTests(true)
       this.editingId = cfg.id
       this.form = JSON.parse(JSON.stringify(cfg))
       this.testResult = null
@@ -420,6 +435,8 @@ export default {
     },
 
     addNewProvider() {
+      this.cancelTest(true)
+      this.cancelAllModelTests(true)
       const defaultPreset = this.providerPresets[1] // DeepSeek
       const defaultModels = getDefaultModels(defaultPreset.id)
       const newCfg = {
@@ -438,6 +455,8 @@ export default {
     },
 
     onProviderChange() {
+      this.cancelTest(true)
+      this.cancelAllModelTests(true)
       const preset = this.providerPresets.find(p => p.id === this.form.providerId)
       if (preset) {
         this.form.baseUrl = preset.baseUrl || this.form.baseUrl
@@ -522,33 +541,107 @@ export default {
       this.editingModelIdx = null
     },
 
+    resultTextColor(result) {
+      if (!result) return 'var(--text-secondary)'
+      if (result.canceled) return 'var(--text-muted)'
+      return result.success ? 'var(--success-500)' : 'var(--danger-500)'
+    },
+
+    cleanupModelTestController(testKey) {
+      if (!testKey || !this.modelTestControllers[testKey]) return
+      const next = { ...this.modelTestControllers }
+      delete next[testKey]
+      this.modelTestControllers = next
+    },
+
+    cancelTest(silent = false) {
+      const controller = this.testAbortController
+      if (!controller && !this.testing) return
+      this.testAbortController = null
+      this.testing = false
+      if (controller && !controller.signal.aborted) controller.abort()
+      if (!silent) {
+        this.testResult = { success: false, canceled: true, message: '已取消测试' }
+      }
+    },
+
+    cancelSingleModelTest(idx, silent = false) {
+      const m = this.form?.models?.[idx]
+      const testKey = m?._testKey
+      const controller = testKey ? this.modelTestControllers[testKey] : null
+      if (controller && !controller.signal.aborted) controller.abort()
+      this.cleanupModelTestController(testKey)
+      if (m?._testing) {
+        const updated = { ...m, _testing: false, _testOk: null, _testMsg: silent ? (m._testMsg || '') : '已取消测试' }
+        delete updated._testKey
+        this.form.models.splice(idx, 1, updated)
+      }
+    },
+
+    cancelAllModelTests(silent = false) {
+      if (!this.form?.models?.length) {
+        for (const controller of Object.values(this.modelTestControllers)) {
+          if (controller && !controller.signal.aborted) controller.abort()
+        }
+        this.modelTestControllers = {}
+        return
+      }
+      for (let idx = this.form.models.length - 1; idx >= 0; idx--) {
+        if (this.form.models[idx]?._testing) this.cancelSingleModelTest(idx, silent)
+      }
+    },
+
     async testSingleModel(idx) {
       const m = this.form.models[idx]
-      if (!m || m._testing) return
+      if (!m) return
+      if (m._testing) {
+        this.cancelSingleModelTest(idx)
+        return
+      }
+      const controller = new AbortController()
+      const testKey = `model-test-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 8)}`
+      this.modelTestControllers = { ...this.modelTestControllers, [testKey]: controller }
       // Vue 2/3 reactivity: use $set or spread to add reactive properties
-      this.form.models.splice(idx, 1, { ...m, _testing: true, _testOk: null, _testMsg: '' })
+      this.form.models.splice(idx, 1, { ...m, _testing: true, _testOk: null, _testMsg: '', _testKey: testKey })
       try {
         const config = getResolvedConfig(this.form, m.id)
-        const result = await testLlmConnection(config)
-        const updated = { ...this.form.models[idx], _testing: false, _testOk: result.success, _testMsg: result.message || '' }
-        this.form.models.splice(idx, 1, updated)
+        const result = await testLlmConnection(config, { signal: controller.signal })
+        const currentIdx = this.form.models.findIndex(item => item._testKey === testKey)
+        if (currentIdx < 0) return
+        const updated = { ...this.form.models[currentIdx], _testing: false, _testOk: result.canceled ? null : result.success, _testMsg: result.message || '' }
+        delete updated._testKey
+        this.form.models.splice(currentIdx, 1, updated)
       } catch (e) {
-        const updated = { ...this.form.models[idx], _testing: false, _testOk: false, _testMsg: String(e) }
-        this.form.models.splice(idx, 1, updated)
+        const currentIdx = this.form.models.findIndex(item => item._testKey === testKey)
+        if (currentIdx < 0) return
+        const updated = { ...this.form.models[currentIdx], _testing: false, _testOk: false, _testMsg: String(e) }
+        delete updated._testKey
+        this.form.models.splice(currentIdx, 1, updated)
+      } finally {
+        this.cleanupModelTestController(testKey)
       }
     },
 
     async doTest() {
       if (!this.form.models.length) return
+      const controller = new AbortController()
+      this.testAbortController = controller
       this.testing = true
       this.testResult = null
       try {
         const config = getResolvedConfig(this.form, this.form.models[0].id)
-        this.testResult = await testLlmConnection(config)
+        const result = await testLlmConnection(config, { signal: controller.signal })
+        if (this.testAbortController !== controller) return
+        this.testResult = result
       } catch (e) {
+        if (this.testAbortController !== controller) return
         this.testResult = { success: false, message: String(e) }
+      } finally {
+        if (this.testAbortController === controller) {
+          this.testAbortController = null
+          this.testing = false
+        }
       }
-      this.testing = false
     },
 
     async doDetect() {
@@ -586,7 +679,8 @@ export default {
       if (!this.form.activeModelId && this.form.models.length > 0) {
         this.form.activeModelId = this.form.models[0].id
       }
-      await upsertProviderConfig(this.form)
+      const models = this.form.models.map(({ _testing, _testOk, _testMsg, _testKey, ...model }) => model)
+      await upsertProviderConfig({ ...this.form, models })
       await refreshProviderConfigs()
       this.editingId = this.form.id
       if (!silent) {
@@ -796,6 +890,9 @@ export default {
   color: #22c55e !important;
 }
 .ai-cfg-fail {
+  color: var(--danger-500) !important;
+}
+.ai-cfg-cancel {
   color: var(--danger-500) !important;
 }
 .ai-cfg-act-btn:disabled {

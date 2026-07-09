@@ -2,6 +2,10 @@
   <div style="display:flex;flex-direction:column;height:100%;">
     <!-- 头部操作栏 -->
     <div class="view-header">
+      <div class="header-title">
+        <Presentation :size="16" />
+        <span>PPT</span>
+      </div>
       <div class="header-actions">
         <span v-if="scanning" style="display:flex;align-items:center;gap:6px;color:var(--text-secondary);font-size:12px;">
           <span class="spinner"></span> 扫描中...

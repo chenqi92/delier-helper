@@ -1344,6 +1344,43 @@ export function generateConfigName(config) {
 const RETRY_STATUS = new Set([408, 425, 429, 500, 502, 503, 504])
 const MAX_RETRIES = 2 // 加上首次共最多 3 次
 const RETRY_BACKOFF_MS = [800, 2000, 4500]
+let llmRequestSeq = 0
+
+function createAbortError() {
+    return new DOMException('操作已取消', 'AbortError')
+}
+
+function isAbortError(e) {
+    return e?.name === 'AbortError'
+        || String(e?.message || e || '').includes('操作已取消')
+}
+
+function nextLlmRequestId() {
+    llmRequestSeq += 1
+    return `llm-${Date.now()}-${llmRequestSeq}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+async function invokeLlmRequest(req, signal) {
+    if (!signal) return await invoke('llm_request', { req })
+    if (signal.aborted) throw createAbortError()
+
+    const requestId = nextLlmRequestId()
+    const payload = { req: { ...req, requestId } }
+    let abortHandler = null
+    const abortPromise = new Promise((_, reject) => {
+        abortHandler = () => {
+            invoke('llm_cancel_request', { requestId }).catch(() => {})
+            reject(createAbortError())
+        }
+        signal.addEventListener('abort', abortHandler, { once: true })
+    })
+
+    try {
+        return await Promise.race([invoke('llm_request', payload), abortPromise])
+    } finally {
+        if (abortHandler) signal.removeEventListener('abort', abortHandler)
+    }
+}
 
 function isContextLimitError(body, status) {
     if (status !== 400 && status !== 413) return false
@@ -1615,25 +1652,14 @@ async function callOpenAiResponsesFallback({ base, apiKey, model, providerId, cl
         deepThinking,
     })
 
-    const invokePromise = invoke('llm_request', {
-        req: {
-            url,
-            apiKey,
-            body: JSON.stringify(reqBody),
-            isGemini: false,
-            isAnthropic: false,
-            clientId: clientId || '',
-        },
-    })
-
-    const result = signal
-        ? await Promise.race([
-            invokePromise,
-            new Promise((_, reject) => {
-                signal.addEventListener('abort', () => reject(new DOMException('操作已取消', 'AbortError')), { once: true })
-            }),
-        ])
-        : await invokePromise
+    const result = await invokeLlmRequest({
+        url,
+        apiKey,
+        body: JSON.stringify(reqBody),
+        isGemini: false,
+        isAnthropic: false,
+        clientId: clientId || '',
+    }, signal)
 
     if (!result.success) {
         throw new Error(parseHttpErrorMessage(result) || `Responses API 错误 (${result.status})`)
@@ -1662,25 +1688,15 @@ async function callAnthropicMessagesFallback({ base, apiKey, model, clientId, me
     const url = `${base}/messages`
     const reqBody = buildAnthropicRequestBody(model, messages, { maxTokens: maxTokens || 8192 })
     const send = async (anthropicBeta = '') => {
-        const invokePromise = invoke('llm_request', {
-            req: {
-                url,
-                apiKey,
-                body: JSON.stringify(reqBody),
-                isGemini: false,
-                isAnthropic: true,
-                anthropicBeta,
-                clientId: clientId || '',
-            },
-        })
-        return signal
-            ? Promise.race([
-                invokePromise,
-                new Promise((_, reject) => {
-                    signal.addEventListener('abort', () => reject(new DOMException('操作已取消', 'AbortError')), { once: true })
-                }),
-            ])
-            : invokePromise
+        return await invokeLlmRequest({
+            url,
+            apiKey,
+            body: JSON.stringify(reqBody),
+            isGemini: false,
+            isAnthropic: true,
+            anthropicBeta,
+            clientId: clientId || '',
+        }, signal)
     }
 
     let result = await send()
@@ -1764,23 +1780,20 @@ async function callSingleLlm(config, messages, options = {}) {
     let lastErr
     let anthropicBeta = ''
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-        if (signal?.aborted) throw new DOMException('操作已取消', 'AbortError')
-
-        const invokePromise = invoke('llm_request', {
-            req: { url, apiKey, body: JSON.stringify(reqBody), isGemini, isAnthropic, anthropicBeta, clientId: clientId || '' },
-        })
+        if (signal?.aborted) throw createAbortError()
 
         try {
-            if (signal) {
-                const abortPromise = new Promise((_, reject) => {
-                    signal.addEventListener('abort', () => reject(new DOMException('操作已取消', 'AbortError')), { once: true })
-                })
-                result = await Promise.race([invokePromise, abortPromise])
-            } else {
-                result = await invokePromise
-            }
+            result = await invokeLlmRequest({
+                url,
+                apiKey,
+                body: JSON.stringify(reqBody),
+                isGemini,
+                isAnthropic,
+                anthropicBeta,
+                clientId: clientId || '',
+            }, signal)
         } catch (e) {
-            if (e?.name === 'AbortError') throw e
+            if (isAbortError(e)) throw e
             lastErr = e
             if (attempt < MAX_RETRIES) {
                 await sleep(RETRY_BACKOFF_MS[attempt], signal)
@@ -1946,7 +1959,7 @@ export async function callLlm(config, messages, options = {}) {
             return result
         } catch (e) {
             lastErr = e
-            if (options.signal?.aborted || e?.name === 'AbortError') throw e
+            if (options.signal?.aborted || isAbortError(e)) throw e
             const message = e?.message || String(e)
             if (!isModelTemporarilyUnavailableError(message) || i >= candidates.length - 1) break
             console.warn(`模型 ${candidate.model} 暂不可用，自动尝试备用模型 ${candidates[i + 1].model}:`, message)
@@ -1957,7 +1970,7 @@ export async function callLlm(config, messages, options = {}) {
 }
 
 function sleep(ms, signal) {
-    if (signal?.aborted) return Promise.reject(new DOMException('操作已取消', 'AbortError'))
+    if (signal?.aborted) return Promise.reject(createAbortError())
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
             cleanup()
@@ -1966,7 +1979,7 @@ function sleep(ms, signal) {
         const onAbort = () => {
             clearTimeout(timer)
             cleanup()
-            reject(new DOMException('操作已取消', 'AbortError'))
+            reject(createAbortError())
         }
         const cleanup = () => {
             if (signal) signal.removeEventListener('abort', onAbort)
@@ -1978,11 +1991,11 @@ function sleep(ms, signal) {
 /**
  * 测试 LLM 连接
  */
-export async function testLlmConnection(config) {
+export async function testLlmConnection(config, options = {}) {
     try {
         const result = await callLlm(config, [
             { role: 'user', content: '请回复一个JSON: {"status":"ok"}' },
-        ], { maxTokens: 64 })
+        ], { maxTokens: 64, signal: options.signal })
         const parsed = extractJsonFromResponse(result)
         if (parsed) {
             return { success: true, message: '连接成功', raw: parsed }
@@ -1990,6 +2003,9 @@ export async function testLlmConnection(config) {
         // 即使 JSON 解析失败，只要有返回就算连接成功
         return { success: true, message: '连接成功（响应非标准 JSON）' }
     } catch (e) {
+        if (options.signal?.aborted || isAbortError(e)) {
+            return { success: false, canceled: true, message: '已取消测试' }
+        }
         return { success: false, message: String(e) }
     }
 }
