@@ -62,12 +62,14 @@
 </template>
 
 <script>
-import { Sun, Moon, FileCode, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList, Presentation, History } from 'lucide-vue-next'
+import { Sun, Moon, FileCode, FileText, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList, Presentation, History, PackageCheck } from 'lucide-vue-next'
 import { markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
 import CloudAccount from './components/CloudAccount.vue'
 import UpdateChecker from './components/UpdateChecker.vue'
 import CopyrightGenerator from './views/CopyrightGenerator.vue'
+import CopyrightPackageGenerator from './views/CopyrightPackageGenerator.vue'
+import SoftwareDocGenerator from './views/SoftwareDocGenerator.vue'
 import ApiDocGenerator from './views/ApiDocGenerator.vue'
 import DbDocGenerator from './views/DbDocGenerator.vue'
 import SrsGenerator from './views/SrsGenerator.vue'
@@ -82,7 +84,7 @@ import { globalStore, initStore } from './core/global-store.js'
 
 export default {
   name: 'App',
-  components: { AiSidebar, CloudAccount, UpdateChecker, Sun, Moon, Bot, HelpCircle, CopyrightGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, PptGenerator, AiSettings, HistoryView, Server, ClipboardCheck, ClipboardList },
+  components: { AiSidebar, CloudAccount, UpdateChecker, Sun, Moon, Bot, HelpCircle, CopyrightGenerator, CopyrightPackageGenerator, SoftwareDocGenerator, ApiDocGenerator, DbDocGenerator, SrsGenerator, SddGenerator, OpsManualGenerator, TestCaseGenerator, TestRecordGenerator, PptGenerator, AiSettings, HistoryView, Server, ClipboardCheck, ClipboardList },
   provide() {
     return {
       showToast: this.showToast,
@@ -101,6 +103,8 @@ export default {
       toast: { show: false, message: '', type: 'info' },
       tabs: [
         { id: 'copyright', label: '软著代码', icon: markRaw(FileCode) },
+        { id: 'copyright-package', label: '软著材料', icon: markRaw(PackageCheck) },
+        { id: 'software-doc', label: '软件文档', icon: markRaw(FileText) },
         { id: 'api-doc',   label: '接口文档', icon: markRaw(Plug) },
         { id: 'db-doc',    label: '数据库文档', icon: markRaw(Database) },
         { id: 'srs-doc',   label: '需求文档', icon: markRaw(BookOpen) },
@@ -113,6 +117,8 @@ export default {
       ],
       viewMap: {
         'copyright': 'CopyrightGenerator',
+        'copyright-package': 'CopyrightPackageGenerator',
+        'software-doc': 'SoftwareDocGenerator',
         'api-doc': 'ApiDocGenerator',
         'db-doc': 'DbDocGenerator',
         'srs-doc': 'SrsGenerator',

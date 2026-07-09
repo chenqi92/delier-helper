@@ -132,7 +132,7 @@ function createCoverPage(docInfo) {
 
     // 信息表
     const infoItems = [
-        ['版本号', version || 'V1.0'],
+        ['版本号', version || ''],
         ['编写人', author || ''],
         ['编写日期', date || new Date().toISOString().slice(0, 10)],
     ]

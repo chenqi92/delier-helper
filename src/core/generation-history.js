@@ -2,6 +2,8 @@ import { saveGenerationHistory } from './db.js'
 
 export const HISTORY_TYPES = [
   { id: 'copyright', label: '软著代码' },
+  { id: 'copyright-package', label: '软著材料' },
+  { id: 'software-doc', label: '软件文档' },
   { id: 'api-doc', label: '接口文档' },
   { id: 'db-doc', label: '数据库文档' },
   { id: 'srs-doc', label: '需求文档' },
