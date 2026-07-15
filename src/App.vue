@@ -63,24 +63,26 @@
 
 <script>
 import { Sun, Moon, FileCode, FileText, Plug, Database, Bot, HelpCircle, BookOpen, FileCheck, Server, ClipboardCheck, ClipboardList, Presentation, History, PackageCheck } from 'lucide-vue-next'
-import { markRaw, reactive } from 'vue'
+import { defineAsyncComponent, markRaw, reactive } from 'vue'
 import AiSidebar from './components/AiSidebar.vue'
 import CloudAccount from './components/CloudAccount.vue'
 import UpdateChecker from './components/UpdateChecker.vue'
-import CopyrightGenerator from './views/CopyrightGenerator.vue'
-import CopyrightPackageGenerator from './views/CopyrightPackageGenerator.vue'
-import SoftwareDocGenerator from './views/SoftwareDocGenerator.vue'
-import ApiDocGenerator from './views/ApiDocGenerator.vue'
-import DbDocGenerator from './views/DbDocGenerator.vue'
-import SrsGenerator from './views/SrsGenerator.vue'
-import SddGenerator from './views/SddGenerator.vue'
-import OpsManualGenerator from './views/OpsManualGenerator.vue'
-import TestCaseGenerator from './views/TestCaseGenerator.vue'
-import TestRecordGenerator from './views/TestRecordGenerator.vue'
-import PptGenerator from './views/PptGenerator.vue'
-import AiSettings from './views/AiSettings.vue'
-import HistoryView from './views/HistoryView.vue'
 import { globalStore, initStore } from './core/global-store.js'
+
+// 页面仍由 keep-alive 完整保留；异步加载只避免未访问功能在启动时占用解析内存。
+const CopyrightGenerator = defineAsyncComponent(() => import('./views/CopyrightGenerator.vue'))
+const CopyrightPackageGenerator = defineAsyncComponent(() => import('./views/CopyrightPackageGenerator.vue'))
+const SoftwareDocGenerator = defineAsyncComponent(() => import('./views/SoftwareDocGenerator.vue'))
+const ApiDocGenerator = defineAsyncComponent(() => import('./views/ApiDocGenerator.vue'))
+const DbDocGenerator = defineAsyncComponent(() => import('./views/DbDocGenerator.vue'))
+const SrsGenerator = defineAsyncComponent(() => import('./views/SrsGenerator.vue'))
+const SddGenerator = defineAsyncComponent(() => import('./views/SddGenerator.vue'))
+const OpsManualGenerator = defineAsyncComponent(() => import('./views/OpsManualGenerator.vue'))
+const TestCaseGenerator = defineAsyncComponent(() => import('./views/TestCaseGenerator.vue'))
+const TestRecordGenerator = defineAsyncComponent(() => import('./views/TestRecordGenerator.vue'))
+const PptGenerator = defineAsyncComponent(() => import('./views/PptGenerator.vue'))
+const AiSettings = defineAsyncComponent(() => import('./views/AiSettings.vue'))
+const HistoryView = defineAsyncComponent(() => import('./views/HistoryView.vue'))
 
 export default {
   name: 'App',

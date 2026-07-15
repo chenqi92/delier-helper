@@ -76,6 +76,9 @@
                 <Lightbulb :size="14" class="tip-icon" />
                 <span>已导入 {{ excelData.sheets.length }} 个工作表，共 {{ excelStats.totalRows }} 条数据</span>
               </div>
+              <div v-if="excelStats.omittedRows || excelStats.omittedImages" class="tip" style="margin-top:6px;color:var(--warning-600);">
+                为保证稳定性，超出上限的 {{ excelStats.omittedRows }} 行、{{ excelStats.omittedImages }} 张图片未载入；建议拆分文件后分批生成。
+              </div>
               <div v-for="sheet in excelData.sheets" :key="sheet.name" style="margin-top:4px;font-size:11px;color:var(--text-secondary);">
                 📋 {{ sheet.name }}（{{ sheet.totalRows }} 行{{ sheet.imageCount > 0 ? `，${sheet.imageCount} 张图片` : '' }}）
               </div>
@@ -323,8 +326,17 @@ export default {
         // 动态注入测试记录到模板章节
         this.sections = injectExcelSections(this.sections, this.excelData, 'testrecord')
         this.expandedSections = new Set(this.sections.map(s => s.id))
-        this.showToast(`成功导入 ${stats.totalRows} 条测试记录，已按模块注入到章节`, 'success')
+        const omitted = stats.omittedRows + stats.omittedImages
+        this.showToast(
+          omitted > 0
+            ? `已导入 ${stats.totalRows} 条；超限内容未载入，建议拆分 Excel 分批处理`
+            : `成功导入 ${stats.totalRows} 条测试记录，已按模块注入到章节`,
+          omitted > 0 ? 'warning' : 'success',
+        )
         this.addLog(`[Excel] 导入 ${this.excelData.sheets.length} 个工作表，共 ${stats.totalRows} 行，已智能分组注入`)
+        if (omitted > 0) {
+          this.addLog(`[Excel] 稳定性限流：省略 ${stats.omittedRows} 行、${stats.omittedImages} 张图片，请拆分文件后分批处理`)
+        }
       } catch (e) {
         this.showToast('Excel 导入失败: ' + String(e), 'error')
       } finally {

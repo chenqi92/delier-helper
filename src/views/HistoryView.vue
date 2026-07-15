@@ -48,7 +48,7 @@
         <p class="hint">生成成功后会自动保存快照，刷新页面后仍可在这里查看。</p>
       </div>
 
-      <template v-else>
+      <template v-else-if="!detailLoading">
         <div class="history-detail-head">
           <div>
             <div class="detail-kicker">{{ typeLabel(selected.type) }} · {{ formatDate(selected.updatedAt) }}</div>
@@ -90,8 +90,12 @@
             </template>
 
             <template v-else-if="artifactKind === 'api-doc'">
+              <div v-if="selected.artifact.truncated" class="preview-muted" style="margin-bottom:8px;">
+                历史记录保存轻量预览：{{ (selected.artifact.modules || []).length }}/{{ selected.artifact.moduleCount }} 个模块，
+                完整结果共 {{ selected.artifact.apiCount }} 个接口
+              </div>
               <div v-for="mod in selected.artifact.modules || []" :key="mod.className || mod.name" class="preview-section">
-                <div class="preview-section-title">{{ mod.name || mod.className }} · {{ (mod.apis || []).length }} 个接口</div>
+                <div class="preview-section-title">{{ mod.name || mod.className }} · {{ mod.apiCount ?? (mod.apis || []).length }} 个接口</div>
                 <div v-for="api in (mod.apis || []).slice(0, 20)" :key="api.methodName || api.path" class="preview-line">
                   <code>{{ api.method }}</code>
                   <span>{{ api.displayPath || api.path }}</span>
@@ -101,8 +105,12 @@
             </template>
 
             <template v-else-if="artifactKind === 'db-doc'">
+              <div v-if="selected.artifact.truncated" class="preview-muted" style="margin-bottom:8px;">
+                历史记录保存轻量预览：{{ (selected.artifact.schema?.tables || []).length }}/{{ selected.artifact.tableCount }} 张表，
+                完整结构共 {{ selected.artifact.columnCount }} 个字段
+              </div>
               <div v-for="table in selected.artifact.schema?.tables || []" :key="table.name" class="preview-section">
-                <div class="preview-section-title">{{ table.name }} · {{ table.comment || '无表说明' }}</div>
+                <div class="preview-section-title">{{ table.name }} · {{ table.comment || '无表说明' }} · {{ table.columnCount ?? tableColumns(table.name).length }} 个字段</div>
                 <div v-for="col in tableColumns(table.name).slice(0, 30)" :key="col.name" class="preview-line">
                   <code>{{ col.name }}</code>
                   <span>{{ col.full_type || col.data_type }}</span>
@@ -147,12 +155,17 @@
           <pre class="json-box">{{ compactJson(selected.result) }}</pre>
         </div>
       </template>
+      <div v-else class="empty-state history-empty-main">
+        <span class="spinner"></span>
+        <p>正在加载历史详情...</p>
+      </div>
     </main>
   </div>
 </template>
 
 <script>
-import { getGenerationHistory, deleteGenerationHistory } from '../core/db.js'
+import { markRaw } from 'vue'
+import { getGenerationHistory, getGenerationHistoryItem, deleteGenerationHistory } from '../core/db.js'
 import { HISTORY_TYPES, historyTypeLabel } from '../core/generation-history.js'
 
 export default {
@@ -162,6 +175,8 @@ export default {
     return {
       loading: false,
       records: [],
+      selectedDetail: null,
+      detailLoading: false,
       selectedId: '',
       activeType: '',
       keyword: '',
@@ -177,6 +192,7 @@ export default {
       })
     },
     selected() {
+      if (this.selectedDetail?.id === this.selectedId) return this.selectedDetail
       return this.records.find(r => r.id === this.selectedId) || this.filteredRecords[0] || null
     },
     artifactKind() {
@@ -199,7 +215,7 @@ export default {
     await this.loadRecords()
   },
   activated() {
-    this.loadRecords()
+    if (this.records.length > 0) this.loadRecords()
   },
   methods: {
     async loadRecords() {
@@ -209,6 +225,7 @@ export default {
         if (!this.records.some(r => r.id === this.selectedId)) {
           this.selectedId = this.records[0]?.id || ''
         }
+        await this.loadSelectedDetail()
       } catch (e) {
         this.showToast?.('历史记录加载失败: ' + String(e), 'error')
       } finally {
@@ -218,14 +235,40 @@ export default {
     setType(type) {
       this.activeType = type
       this.selectedId = ''
+      this.selectedDetail = null
       this.loadRecords()
     },
-    selectRecord(id) {
+    async selectRecord(id) {
+      if (id === this.selectedId && this.selectedDetail?.id === id) return
       this.selectedId = id
+      this.selectedDetail = null
+      await this.loadSelectedDetail()
+    },
+    async loadSelectedDetail() {
+      const id = this.selectedId
+      if (!id) {
+        this.selectedDetail = null
+        return
+      }
+      if (this.selectedDetail?.id === id) return
+      const token = (this._detailLoadToken || 0) + 1
+      this._detailLoadToken = token
+      this.detailLoading = true
+      try {
+        const detail = await getGenerationHistoryItem(id)
+        if (this._detailLoadToken === token && this.selectedId === id) {
+          this.selectedDetail = detail ? markRaw(detail) : null
+        }
+      } catch (e) {
+        if (this._detailLoadToken === token) this.showToast?.('历史详情加载失败: ' + String(e), 'error')
+      } finally {
+        if (this._detailLoadToken === token) this.detailLoading = false
+      }
     },
     async removeSelected() {
       if (!this.selected) return
       await deleteGenerationHistory(this.selected.id)
+      this.selectedDetail = null
       this.showToast?.('历史记录已删除', 'success')
       await this.loadRecords()
     },

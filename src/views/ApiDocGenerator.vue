@@ -147,11 +147,21 @@
               <span class="select-action" @click="selectAllModules">全选</span>
               <span class="select-action" @click="deselectAllModules">全不选</span>
             </div>
+            <input
+              v-if="parseResult.modules.length > moduleSelectorLimit"
+              v-model.trim="moduleSearch"
+              class="setting-input"
+              style="width:100%;margin:6px 0;"
+              placeholder="搜索模块/Controller"
+            />
             <div style="max-height:160px;overflow-y:auto;">
-              <label v-for="mod in parseResult.modules" :key="mod.className" class="checkbox-label" style="display:flex;margin-bottom:4px;">
+              <label v-for="mod in selectableModules" :key="mod.className" class="checkbox-label" style="display:flex;margin-bottom:4px;">
                 <input type="checkbox" :value="mod.className" v-model="selectedModules" />
                 <span>{{ mod.name }} <span style="color:var(--text-muted);font-size:11px;">({{ mod.apis.length }})</span></span>
               </label>
+            </div>
+            <div v-if="matchingModules.length > selectableModules.length" style="margin-top:6px;font-size:11px;color:var(--text-muted);">
+              当前显示前 {{ selectableModules.length }} 项，请输入关键词缩小范围
             </div>
           </div>
         </div>
@@ -206,7 +216,7 @@
                 <div style="display:flex;align-items:center;gap:8px;">
                   <ChevronRight :size="14" :class="{'chevron-expanded': expandedModules.has(mod.className)}" />
                   <span class="api-module-index">{{ modIdx + 1 }}</span>
-                  <span class="api-module-name">{{ mod.name }}</span>
+                  <span class="api-module-name">{{ formatModuleName(mod.name) }}</span>
                   <span class="badge badge-primary">{{ mod.apis.length }}</span>
                 </div>
                 <span v-if="mod.file" style="font-size:11px;color:var(--text-muted);">{{ mod.file }}</span>
@@ -222,7 +232,7 @@
                     <div style="display:flex;align-items:center;gap:8px;">
                       <span class="api-index">{{ modIdx + 1 }}.{{ idx + 1 }}</span>
                       <span :class="'method-badge method-' + api.method.toLowerCase()">{{ api.method }}</span>
-                      <span class="api-path">{{ api.displayPath || api.path }}</span>
+                      <span class="api-path">{{ formatDisplayPath(api.path) }}</span>
                     </div>
                     <span class="api-summary-text">{{ api.summary }}</span>
                   </div>
@@ -334,6 +344,14 @@
                 </div>
               </div>
             </div>
+            <button
+              v-if="groupByController && displayModules.length < filteredModules.length"
+              class="btn btn-secondary btn-sm"
+              style="width:100%;margin-top:8px;"
+              @click="visibleModuleCount += modulePageSize"
+            >
+              继续加载（已显示 {{ displayModules.length }}/{{ filteredModules.length }} 个模块）
+            </button>
 
             <!-- 扁平模式：直接列出 API -->
             <div v-if="!groupByController" class="flat-api-list">
@@ -409,6 +427,14 @@
                 </div>
               </div>
             </div>
+            <button
+              v-if="!groupByController && flatApis.length < filteredApis"
+              class="btn btn-secondary btn-sm"
+              style="width:100%;margin-top:8px;"
+              @click="visibleApiCount += apiPageSize"
+            >
+              继续加载（已显示 {{ flatApis.length }}/{{ filteredApis }} 个接口）
+            </button>
 
           </div>
         </template>
@@ -418,6 +444,7 @@
 </template>
 
 <script>
+import { markRaw } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
@@ -432,6 +459,9 @@ import {
   FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
   Plug, Filter, Settings, ChevronRight, Scan, Bot
 } from 'lucide-vue-next'
+
+const MAX_API_SOURCE_FILE_BYTES = 5 * 1024 * 1024
+const API_READ_BATCH_SIZE = 25
 
 export default {
   name: 'ApiDocGenerator',
@@ -451,6 +481,12 @@ export default {
       parseLogs: [],
       parseResult: null,
       selectedModules: [],
+      moduleSearch: '',
+      moduleSelectorLimit: 300,
+      modulePageSize: 150,
+      apiPageSize: 300,
+      visibleModuleCount: 150,
+      visibleApiCount: 300,
       expandedModules: new Set(),
       expandedApis: new Set(),
       docModules: JSON.parse(JSON.stringify(DEFAULT_DOC_MODULES)),
@@ -492,8 +528,18 @@ export default {
     },
     filteredModules() {
       if (!this.parseResult) return []
-      if (this.selectedModules.length === 0) return this.parseResult.modules
       return this.parseResult.modules.filter(m => this.selectedModules.includes(m.className))
+    },
+    matchingModules() {
+      if (!this.parseResult) return []
+      const query = this.moduleSearch.toLowerCase()
+      if (!query) return this.parseResult.modules
+      return this.parseResult.modules.filter(mod =>
+        `${mod.name || ''} ${mod.className || ''} ${mod.file || ''}`.toLowerCase().includes(query)
+      )
+    },
+    selectableModules() {
+      return this.matchingModules.slice(0, this.moduleSelectorLimit)
     },
     filteredApis() {
       return this.filteredModules.reduce((s, m) => s + m.apis.length, 0)
@@ -521,23 +567,8 @@ export default {
       }
     },
     displayModules() {
-      const prefix = this.customPrefix ? this.customPrefix.replace(/\/+$/, '') : ''
-      const addPrefix = (path) => {
-        if (!prefix) return path
-        const p = path.startsWith('/') ? path : '/' + path
-        return (prefix + p).replace(/\/+/g, '/')
-      }
-      const stripPath = (name) => {
-        if (this.showModulePath) return name
-        return name.replace(/^\[.*?\]\s*/, '')
-      }
-
       if (this.groupByController) {
-        return this.filteredModules.map(mod => ({
-          ...mod,
-          name: stripPath(mod.name),
-          apis: mod.apis.map(api => ({ ...api, displayPath: addPrefix(api.path) })),
-        }))
+        return this.filteredModules.slice(0, this.visibleModuleCount)
       } else {
         return []
       }
@@ -555,14 +586,20 @@ export default {
         return name.replace(/^\[.*?\]\s*/, '')
       }
       const allApis = []
+      let reachedLimit = false
       for (const mod of this.filteredModules) {
         for (const api of mod.apis) {
+          if (allApis.length >= this.visibleApiCount) {
+            reachedLimit = true
+            break
+          }
           allApis.push({
             ...api,
             displayPath: addPrefix(api.path),
             _fromModule: stripPath(mod.name),
           })
         }
+        if (reachedLimit) break
       }
       return allApis
     },
@@ -635,8 +672,16 @@ export default {
     // ===== 解析 =====
     async startParsing() {
       if (!this.projectDir || !this.detectedLang) return
+      this.parseResult = null
+      this.selectedModules = []
+      this.expandedModules = new Set()
+      this.expandedApis = new Set()
+      this.moduleSearch = ''
+      this.visibleModuleCount = this.modulePageSize
+      this.visibleApiCount = this.apiPageSize
       this.parsing = true
       this.parsePercent = 0
+      this.parseProgress = '准备解析...'
       window.dispatchEvent(new CustomEvent('ai-fill-start'))
       const lang = this.detectedLang
       this.addLog(`开始解析 ${lang.label} 项目...`)
@@ -656,22 +701,30 @@ export default {
           useGitignore: true,
         })
 
-        const sourceFiles = scanResult.files.filter(f => f.ext === ext)
+        const matchedSourceFiles = scanResult.files.filter(f => f.ext === ext)
+        const sourceFiles = matchedSourceFiles.filter(f => Number(f.size || 0) <= MAX_API_SOURCE_FILE_BYTES)
+        const oversizedSourceFiles = matchedSourceFiles.length - sourceFiles.length
         if (sourceFiles.length === 0) {
-          this.showToast(`未找到 ${ext} 文件`, 'warning')
-          this.addLog(`[警告] 未找到 ${ext} 文件`)
+          const message = oversizedSourceFiles > 0
+            ? `${oversizedSourceFiles} 个 ${ext} 文件均超过 5MB，请拆分后重试`
+            : `未找到 ${ext} 文件`
+          this.showToast(message, 'warning')
+          this.addLog(`[警告] ${message}`)
           this.parsing = false
           return
         }
 
         this.addLog(`发现 ${sourceFiles.length} 个 ${ext} 文件`)
+        if (oversizedSourceFiles > 0) {
+          this.addLog(`[稳定性限流] 已跳过 ${oversizedSourceFiles} 个超过 5MB 的超大源码文件`)
+        }
         this.parsePercent = 5
 
         // 2. 分批读取内容
         const allFiles = []
-        for (let i = 0; i < sourceFiles.length; i += 50) {
-          const batch = sourceFiles.slice(i, i + 50)
-          const loaded = Math.min(i + 50, sourceFiles.length)
+        for (let i = 0; i < sourceFiles.length; i += API_READ_BATCH_SIZE) {
+          const batch = sourceFiles.slice(i, i + API_READ_BATCH_SIZE)
+          const loaded = Math.min(i + API_READ_BATCH_SIZE, sourceFiles.length)
           this.addLog(`正在读取文件 (${loaded}/${sourceFiles.length})...`)
           this.parsePercent = 5 + Math.round((loaded / sourceFiles.length) * 15)
 
@@ -699,12 +752,22 @@ export default {
 
         // 3. 动态调度对应解析器
         await new Promise(r => setTimeout(r, 50))
+        let lastProgressPercent = -1
+        const parsedFileCount = allFiles.length
         const result = await parseProject(lang.id, allFiles, (msg, pct) => {
-          this.addLog(msg)
-          this.parsePercent = 20 + Math.round(pct * 0.8)
+          const normalizedPercent = Math.max(0, Math.min(100, Math.round(pct)))
+          this.parsePercent = 20 + Math.round(normalizedPercent * 0.8)
+          const isImportant = /\[(?:警告|失败)\]/.test(msg) || normalizedPercent === 100
+          if (isImportant || normalizedPercent !== lastProgressPercent) {
+            lastProgressPercent = normalizedPercent
+            this.parseProgress = msg
+            this.addLog(msg)
+          }
         })
 
-        this.parseResult = result
+        // 解析完成后立即释放源码字符串，避免和解析结果、历史快照同时占用内存。
+        allFiles.length = 0
+        this.parseResult = markRaw(result)
         this.selectedModules = result.modules.map(m => m.className)
 
         if (result.modules.length > 0) {
@@ -713,6 +776,7 @@ export default {
 
         const apiCount = result.modules.reduce((s, m) => s + m.apis.length, 0)
         this.parsePercent = 100
+        this.parseProgress = '解析完成'
         this.addLog(`[完成] 解析完成！${result.modules.length} 个模块，${apiCount} 个接口`)
         await saveHistoryRecord({
           type: 'api-doc',
@@ -722,7 +786,7 @@ export default {
             projectDir: this.projectDir,
             language: lang,
             sourceFileCount: sourceFiles.length,
-            parsedFileCount: allFiles.length,
+            parsedFileCount,
           },
           settings: {
             customPrefix: this.customPrefix,
@@ -775,6 +839,18 @@ export default {
       const s = new Set(this.expandedApis)
       s.has(key) ? s.delete(key) : s.add(key)
       this.expandedApis = s
+    },
+
+    formatModuleName(name) {
+      if (this.showModulePath) return name
+      return String(name || '').replace(/^\[.*?\]\s*/, '')
+    },
+
+    formatDisplayPath(path) {
+      const prefix = this.customPrefix ? this.customPrefix.replace(/\/+$/, '') : ''
+      if (!prefix) return path
+      const normalizedPath = String(path || '').startsWith('/') ? path : '/' + path
+      return (prefix + normalizedPath).replace(/\/+/g, '/')
     },
 
     // ===== 文档模块排序 =====
@@ -891,7 +967,7 @@ export default {
             this.aiProgressText = msg
           },
           (batchName, filled, batchTotal) => {
-            this.parseResult = { ...this.parseResult }
+            this.parseResult = markRaw({ ...this.parseResult })
           },
           controller,
         )
@@ -902,7 +978,7 @@ export default {
           this.showToast('没有需要补充的占位符', 'info')
         } else {
           this.showToast(`AI 补充完成: ${result.filled}/${result.total} 个字段已填充`, 'success')
-          this.parseResult = { ...this.parseResult }
+          this.parseResult = markRaw({ ...this.parseResult })
           await saveHistoryRecord({
             type: 'api-doc',
             title: `${this.projectDir.split(/[/\\]/).pop() || '项目'} 接口文档（AI 补充）`,

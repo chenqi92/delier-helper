@@ -32,6 +32,10 @@ const TYPE_DEFAULTS = {
     'Character': '""',
 }
 
+const MAX_EXAMPLE_DEPTH = 4
+const MAX_EXAMPLE_FIELDS_PER_OBJECT = 12
+const MAX_EXAMPLE_NODES = 80
+
 /**
  * 判断是否为集合类型
  */
@@ -333,9 +337,10 @@ export function resolveTypeFields(typeName, typeIndex, visited = new Set(), dept
  * @param {Set} visited - 已访问集合
  * @returns {*} JSON 值
  */
-export function generateExampleValue(typeName, typeIndex, visited = new Set(), depth = 0) {
+export function generateExampleValue(typeName, typeIndex, visited = new Set(), depth = 0, budget = null) {
     if (!typeName) return null
-    if (depth > 6) return {} // 防止过深递归
+    const nodeBudget = budget || { remaining: MAX_EXAMPLE_NODES }
+    if (depth > MAX_EXAMPLE_DEPTH || nodeBudget.remaining <= 0) return {}
 
     // 去数组标记
     const isArray = typeName.endsWith('[]')
@@ -357,16 +362,16 @@ export function generateExampleValue(typeName, typeIndex, visited = new Set(), d
     const generic = extractGenericType(cleanType)
     if (generic) {
         if (isCollectionType(cleanType)) {
-            const innerVal = generateExampleValue(generic.inner, typeIndex, new Set(visited), depth + 1)
+            const innerVal = generateExampleValue(generic.inner, typeIndex, new Set(visited), depth + 1, nodeBudget)
             return [innerVal]
         }
         if (generic.isMap) {
             return {}
         }
         // 包装类型如 CommonResult<UserVO>
-        const outerExample = generateExampleValue(generic.outer, typeIndex, new Set(visited), depth + 1)
+        const outerExample = generateExampleValue(generic.outer, typeIndex, new Set(visited), depth + 1, nodeBudget)
         if (outerExample && typeof outerExample === 'object') {
-            const innerExample = generateExampleValue(generic.inner, typeIndex, new Set(visited), depth + 1)
+            const innerExample = generateExampleValue(generic.inner, typeIndex, new Set(visited), depth + 1, nodeBudget)
             if (outerExample.hasOwnProperty('data')) {
                 outerExample.data = innerExample
             }
@@ -379,9 +384,11 @@ export function generateExampleValue(typeName, typeIndex, visited = new Set(), d
     if (!classDef) return isArray ? [{}] : {}
 
     const obj = {}
-    const fieldSlice = classDef.fields.slice(0, 30) // 截断过多字段
+    const fieldSlice = classDef.fields.slice(0, MAX_EXAMPLE_FIELDS_PER_OBJECT)
     for (const field of fieldSlice) {
-        obj[field.name] = generateExampleValue(field.type, typeIndex, new Set(visited), depth + 1)
+        if (nodeBudget.remaining <= 0) break
+        nodeBudget.remaining -= 1
+        obj[field.name] = generateExampleValue(field.type, typeIndex, new Set(visited), depth + 1, nodeBudget)
     }
 
     return isArray ? [obj] : obj

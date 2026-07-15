@@ -65,6 +65,15 @@
           </div>
         </div>
         <div class="chat-messages" ref="chatMessagesRef">
+          <button
+            v-if="chatMessages.length > 0 && chatHasMore"
+            class="chat-load-older"
+            :disabled="chatLoadingOlder"
+            @click="loadOlderMessages"
+          >
+            {{ chatLoadingOlder ? '加载中...' : '加载更早消息' }}
+          </button>
+          <div v-else-if="chatHistoryCapped" class="chat-history-cap">为保证流畅度，仅显示最近 {{ chatUiMaxMessages }} 条消息</div>
           <div v-if="chatMessages.length === 0" class="chat-empty">
             <Bot :size="28" style="opacity:0.3;" />
             <p>选择模型后开始对话</p>
@@ -163,6 +172,12 @@ import { marked } from 'marked'
 
 marked.setOptions({ breaks: true, gfm: true })
 
+const MAX_LOG_ENTRIES = 500
+const CHAT_HISTORY_PAGE_SIZE = 100
+const CHAT_UI_MAX_MESSAGES = 500
+const CHAT_CONTEXT_MAX_MESSAGES = 40
+const CHAT_CONTEXT_MAX_CHARS = 60000
+
 export default {
   name: 'AiSidebar',
   components: { ClipboardList, MessageCircle, Bot, Send, Brain, Trash2, ImagePlus, X, Plus, History },
@@ -176,6 +191,11 @@ export default {
       chatMessages: [],
       chatInput: '',
       chatLoading: false,
+      chatLoadingOlder: false,
+      chatHistoryOffset: 0,
+      chatHasMore: false,
+      chatHistoryCapped: false,
+      chatUiMaxMessages: CHAT_UI_MAX_MESSAGES,
       chatImages: [],
       conversations: [],
       currentConversationId: null,
@@ -186,11 +206,11 @@ export default {
   mounted() {
     this._logHandler = (e) => {
       this.logs.push(e.detail)
+      if (this.logs.length > MAX_LOG_ENTRIES) {
+        this.logs.splice(0, this.logs.length - MAX_LOG_ENTRIES)
+      }
       if (this.activeTab === 'logs') {
-        this.$nextTick(() => {
-          const el = this.$refs.logListRef
-          if (el) el.scrollTop = el.scrollHeight
-        })
+        this.scheduleLogScroll()
       }
     }
     window.addEventListener('ai-log', this._logHandler)
@@ -226,6 +246,7 @@ export default {
     if (this._logHandler) window.removeEventListener('ai-log', this._logHandler)
     if (this._aiStartHandler) window.removeEventListener('ai-fill-start', this._aiStartHandler)
     if (this._usageHandler) window.removeEventListener('llm-usage', this._usageHandler)
+    if (this._logScrollFrame) cancelAnimationFrame(this._logScrollFrame)
   },
   computed: {
     currentProviderModels() {
@@ -242,6 +263,14 @@ export default {
     },
   },
   methods: {
+    scheduleLogScroll() {
+      if (this._logScrollFrame) return
+      this._logScrollFrame = requestAnimationFrame(() => {
+        this._logScrollFrame = null
+        const el = this.$refs.logListRef
+        if (el) el.scrollTop = el.scrollHeight
+      })
+    },
     formatTokens(n) {
       if (!n) return '0'
       if (n >= 1000000) return (n / 1000000).toFixed(2) + 'M'
@@ -404,6 +433,7 @@ export default {
 
       this.chatMessages.push({ role: 'user', content: text, images: images.length > 0 ? images : undefined })
       await addMessage(this.currentConversationId, 'user', text, null, images.length > 0 ? images : null)
+      this.chatHistoryOffset += 1
 
       // 第一条消息自动生成标题
       const isFirst = this.chatMessages.filter(m => m.role === 'user').length === 1
@@ -425,12 +455,16 @@ export default {
         const assistantMsg = { role: 'assistant', content: result.content || '', thinking: result.thinking || null }
         this.chatMessages.push(assistantMsg)
         await addMessage(this.currentConversationId, 'assistant', assistantMsg.content, assistantMsg.thinking)
+        this.chatHistoryOffset += 1
       } catch (err) {
         console.error('对话请求失败:', err)
         const errStr = typeof err === 'string' ? err : (err?.message || String(err))
         const errContent = `**错误**：${errStr}`
         this.chatMessages.push({ role: 'assistant', content: errContent })
-        try { await addMessage(this.currentConversationId, 'assistant', errContent) } catch {}
+        try {
+          await addMessage(this.currentConversationId, 'assistant', errContent)
+          this.chatHistoryOffset += 1
+        } catch {}
         this.showToast('请求失败: ' + errStr, 'error')
       } finally {
         this.chatLoading = false
@@ -439,10 +473,22 @@ export default {
     },
 
     buildApiMessages() {
-      return this.chatMessages
-        .filter(m => m.role === 'user' || m.role === 'assistant')
-        .map(m => {
-          if (m.role === 'user' && m.images && m.images.length > 0) {
+      const source = this.chatMessages.filter(m => m.role === 'user' || m.role === 'assistant')
+      const selected = []
+      let remainingChars = CHAT_CONTEXT_MAX_CHARS
+      for (let i = source.length - 1; i >= 0 && selected.length < CHAT_CONTEXT_MAX_MESSAGES; i--) {
+        const message = source[i]
+        const rawContent = String(message.content || '')
+        const content = rawContent.slice(0, remainingChars)
+        const includeImages = i === source.length - 1 && message.role === 'user' && message.images?.length > 0
+        if (!content && !includeImages) continue
+        selected.unshift({ ...message, content, includeImages })
+        remainingChars -= content.length
+        if (remainingChars <= 0) break
+      }
+
+      return selected.map(m => {
+          if (m.includeImages) {
             const content = []
             for (const img of m.images) {
               const match = img.match(/^data:(image\/\w+);base64,(.+)$/)
@@ -486,26 +532,75 @@ export default {
       }
     },
     newConversation() {
+      this._conversationLoadToken = (this._conversationLoadToken || 0) + 1
       this.currentConversationId = null
       this.chatMessages = []
+      this.chatHistoryOffset = 0
+      this.chatHasMore = false
+      this.chatHistoryCapped = false
       this.chatImages = []
       this.showConvList = false
     },
     async switchConversation(id) {
+      const loadToken = (this._conversationLoadToken || 0) + 1
+      this._conversationLoadToken = loadToken
       this.currentConversationId = id
       this.showConvList = false
       try {
-        const msgs = await getMessages(id)
+        const msgs = await getMessages(id, CHAT_HISTORY_PAGE_SIZE, 0)
+        if (this._conversationLoadToken !== loadToken || this.currentConversationId !== id) return
         this.chatMessages = msgs.map(m => ({
           role: m.role,
           content: m.content,
           thinking: m.thinking || null,
           images: m.images,
         }))
+        this.chatHistoryOffset = msgs.length
+        this.chatHasMore = msgs.length === CHAT_HISTORY_PAGE_SIZE
+        this.chatHistoryCapped = false
         this.$nextTick(() => this.scrollChatBottom())
       } catch (e) {
         console.error('加载对话失败:', e)
         this.showToast('加载对话失败: ' + String(e), 'error')
+      }
+    },
+    async loadOlderMessages() {
+      if (!this.currentConversationId || !this.chatHasMore || this.chatLoadingOlder) return
+      const remainingCapacity = CHAT_UI_MAX_MESSAGES - this.chatMessages.length
+      if (remainingCapacity <= 0) {
+        this.chatHasMore = false
+        this.chatHistoryCapped = true
+        return
+      }
+
+      this.chatLoadingOlder = true
+      const conversationId = this.currentConversationId
+      const loadToken = this._conversationLoadToken
+      const el = this.$refs.chatMessagesRef
+      const previousHeight = el?.scrollHeight || 0
+      try {
+        const limit = Math.min(CHAT_HISTORY_PAGE_SIZE, remainingCapacity)
+        const msgs = await getMessages(conversationId, limit, this.chatHistoryOffset)
+        if (this._conversationLoadToken !== loadToken || this.currentConversationId !== conversationId) return
+        const older = msgs.map(m => ({
+          role: m.role,
+          content: m.content,
+          thinking: m.thinking || null,
+          images: m.images,
+        }))
+        this.chatMessages.unshift(...older)
+        this.chatHistoryOffset += older.length
+        const reachedUiCap = this.chatMessages.length >= CHAT_UI_MAX_MESSAGES
+        this.chatHasMore = older.length === limit && !reachedUiCap
+        this.chatHistoryCapped = reachedUiCap && older.length === limit
+        this.$nextTick(() => {
+          const current = this.$refs.chatMessagesRef
+          if (current) current.scrollTop += current.scrollHeight - previousHeight
+        })
+      } catch (e) {
+        this.showToast('加载更早消息失败: ' + String(e), 'error')
+      } finally {
+        this.chatLoadingOlder = false
       }
     },
     async deleteConv(id) {
@@ -515,6 +610,9 @@ export default {
         if (this.currentConversationId === id) {
           this.currentConversationId = null
           this.chatMessages = []
+          this.chatHistoryOffset = 0
+          this.chatHasMore = false
+          this.chatHistoryCapped = false
         }
       } catch (e) {
         console.error('删除对话失败:', e)
@@ -530,6 +628,9 @@ export default {
         this.conversations = []
         this.currentConversationId = null
         this.chatMessages = []
+        this.chatHistoryOffset = 0
+        this.chatHasMore = false
+        this.chatHistoryCapped = false
         this.showToast('已清空全部对话', 'success')
       } catch (e) {
         console.error('清空失败:', e)
@@ -542,6 +643,28 @@ export default {
 </script>
 
 <style scoped>
+.chat-load-older {
+  display: block;
+  margin: 4px auto 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chat-load-older:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.chat-history-cap {
+  padding: 4px 8px 10px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
 .ai-token-usage-bar {
   display: flex;
   flex-wrap: wrap;

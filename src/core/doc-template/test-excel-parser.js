@@ -13,6 +13,17 @@ const EXT_MIME = {
     tiff: 'image/tiff', tif: 'image/tiff', emf: 'image/x-emf', wmf: 'image/x-wmf',
 }
 
+export const TEST_EXCEL_LIMITS = Object.freeze({
+    maxTotalRows: 5000,
+    maxRowsPerSheet: 2000,
+    maxColumnsPerSheet: 100,
+    maxCellChars: 4000,
+    maxMarkdownRowsPerSheet: 200,
+    maxImages: 30,
+    maxImageBytes: 3 * 1024 * 1024,
+    maxTotalImageBytes: 20 * 1024 * 1024,
+})
+
 /**
  * 从 ArrayBuffer 读取 Excel 并提取原始数据（含图片）
  * @param {ArrayBuffer|Uint8Array} buffer
@@ -20,31 +31,56 @@ const EXT_MIME = {
  */
 export async function parseTestExcel(buffer) {
     const uint8 = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer)
-    const workbook = XLSX.read(uint8, { type: 'array' })
 
-    // 提取图片
+    // 先完成 ZIP 图片提取，再解析工作簿，降低两套解析结构同时驻留的峰值。
     let imagesBySheetFile = {}
     let sheetFileMapping = {}
+    let imageStats = { retainedImages: 0, omittedImages: 0, totalImageBytes: 0 }
     try {
         const extraction = await extractImagesFromXlsx(uint8)
         imagesBySheetFile = extraction.imagesBySheetFile
         sheetFileMapping = extraction.sheetFileMapping
+        imageStats = extraction.imageStats
     } catch (e) {
         console.warn('图片提取失败（不影响文字数据）:', e)
     }
+    const workbook = XLSX.read(uint8, { type: 'array' })
 
     const sheets = []
+    let retainedRows = 0
+    let omittedRows = 0
 
     for (let sheetIdx = 0; sheetIdx < workbook.SheetNames.length; sheetIdx++) {
         const sheetName = workbook.SheetNames[sheetIdx]
         const sheet = workbook.Sheets[sheetName]
-        const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' })
+        if (!sheet?.['!ref']) continue
+
+        const sourceRange = XLSX.utils.decode_range(sheet['!ref'])
+        const remainingRows = Math.max(0, TEST_EXCEL_LIMITS.maxTotalRows - retainedRows)
+        const sheetRowLimit = Math.min(TEST_EXCEL_LIMITS.maxRowsPerSheet, remainingRows)
+        if (sheetRowLimit === 0) {
+            omittedRows += Math.max(0, sourceRange.e.r - sourceRange.s.r)
+            continue
+        }
+
+        // 只解码当前会保留的行列，避免 sheet_to_json 先创建一份无界的二维数组。
+        const readRange = {
+            s: sourceRange.s,
+            e: {
+                r: Math.min(sourceRange.e.r, sourceRange.s.r + sheetRowLimit + 5),
+                c: Math.min(sourceRange.e.c, sourceRange.s.c + TEST_EXCEL_LIMITS.maxColumnsPerSheet - 1),
+            },
+        }
+        const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', range: readRange })
         if (!jsonData || jsonData.length < 2) continue
 
         // 找出表头行（前5行中最像表头的行）
         const headerRowIndex = findHeaderRow(jsonData)
         const rawHeaders = jsonData[headerRowIndex] || []
-        const headers = rawHeaders.map(c => normalizeHeader(c)).filter(h => h)
+        const headerEntries = rawHeaders
+            .map((cell, index) => ({ name: normalizeHeader(cell), index }))
+            .filter(entry => entry.name)
+        const headers = headerEntries.map(entry => entry.name)
 
         if (headers.length < 2) continue
 
@@ -53,18 +89,19 @@ export async function parseTestExcel(buffer) {
         const sheetImages = sheetFileName ? (imagesBySheetFile[sheetFileName] || {}) : {}
 
         // 提取数据行（表头之后的所有非空行）
-        const dataRows = jsonData.slice(headerRowIndex + 1).filter(row =>
-            row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== '')
-        )
+        const dataRows = jsonData.slice(headerRowIndex + 1)
+            .map((row, offset) => ({
+                row,
+                actualRow: readRange.s.r + headerRowIndex + 1 + offset,
+            }))
+            .filter(({ row }) => row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''))
+            .slice(0, sheetRowLimit)
 
-        const rows = dataRows.map((row, dataRowIdx) => {
-            const actualRow = headerRowIndex + 1 + dataRowIdx
+        const rows = dataRows.map(({ row, actualRow }) => {
             // 以标准化表头为 key 构建一行数据
             const obj = {}
-            for (let i = 0; i < headers.length; i++) {
-                if (headers[i]) {
-                    obj[headers[i]] = normalizeCell(row[i])
-                }
+            for (const header of headerEntries) {
+                obj[header.name] = normalizeCell(row[header.index])
             }
 
             // 查找该行关联的图片
@@ -85,7 +122,12 @@ export async function parseTestExcel(buffer) {
             return vals.some(v => v !== '')
         })
 
-        const allSheetImages = Object.values(sheetImages)
+        const sourceTotalRows = Math.max(rows.length, sourceRange.e.r - (sourceRange.s.r + headerRowIndex))
+        const sheetOmittedRows = Math.max(0, sourceTotalRows - rows.length)
+        retainedRows += rows.length
+        omittedRows += sheetOmittedRows
+        const retainedRowNumbers = new Set(rows.map(row => row._rowIndex))
+        const allSheetImages = Object.values(sheetImages).filter(img => retainedRowNumbers.has(img.row))
 
         if (rows.length > 0) {
             sheets.push({
@@ -93,13 +135,27 @@ export async function parseTestExcel(buffer) {
                 headers,
                 rows,
                 totalRows: rows.length,
+                sourceTotalRows,
+                omittedRows: sheetOmittedRows,
+                truncated: sheetOmittedRows > 0 || sourceRange.e.c > readRange.e.c,
                 images: allSheetImages,
                 imageCount: allSheetImages.length,
             })
         }
     }
 
-    return { sheets }
+    return {
+        sheets,
+        limits: {
+            ...TEST_EXCEL_LIMITS,
+            retainedRows,
+            omittedRows,
+            retainedImages: imageStats.retainedImages,
+            omittedImages: imageStats.omittedImages,
+            totalImageBytes: imageStats.totalImageBytes,
+            truncated: omittedRows > 0 || imageStats.omittedImages > 0,
+        },
+    }
 }
 
 /**
@@ -120,7 +176,8 @@ export function sheetsToMarkdown(excelData) {
             `| ${sheet.headers.join(' | ')} |`,
             `| ${sheet.headers.map(() => '---').join(' | ')} |`,
         ]
-        for (const row of sheet.rows) {
+        const markdownRows = sheet.rows.slice(0, TEST_EXCEL_LIMITS.maxMarkdownRowsPerSheet)
+        for (const row of markdownRows) {
             const cells = sheet.headers.map(h => {
                 const val = row[h] || ''
                 return val.replace(/\|/g, '｜').replace(/[\r\n]+/g, ' ').trim() || '-'
@@ -128,6 +185,9 @@ export function sheetsToMarkdown(excelData) {
             lines.push(`| ${cells.join(' | ')} |`)
         }
         md += lines.join('\n')
+        if (sheet.rows.length > markdownRows.length) {
+            md += `\n\n> 为控制生成上下文，本工作表仅展示前 ${markdownRows.length} 条；其余数据已拆分到对应生成章节。`
+        }
 
         // 标注含图片的行
         const imgRows = sheet.rows.filter(r => r._images?.length > 0)
@@ -149,7 +209,15 @@ export function getBasicStats(excelData) {
     const totalRows = excelData.sheets.reduce((sum, s) => sum + s.totalRows, 0)
     const totalImages = excelData.sheets.reduce((sum, s) => sum + (s.imageCount || 0), 0)
     const allHeaders = excelData.sheets.flatMap(s => s.headers)
-    return { totalRows, totalImages, sheetCount: excelData.sheets.length, allHeaders }
+    return {
+        totalRows,
+        totalImages,
+        sourceTotalRows: totalRows + (excelData.limits?.omittedRows || 0),
+        omittedRows: excelData.limits?.omittedRows || 0,
+        omittedImages: excelData.limits?.omittedImages || 0,
+        sheetCount: excelData.sheets.length,
+        allHeaders,
+    }
 }
 
 // ==================== 内部工具函数 ====================
@@ -170,7 +238,10 @@ function normalizeCell(val) {
     if (typeof val === 'number' && val > 40000 && val < 55000 && Number.isInteger(val)) {
         return excelDateToString(val)
     }
-    return String(val).replace(/[\r]/g, '').trim()
+    const normalized = String(val).replace(/[\r]/g, '').trim()
+    return normalized.length > TEST_EXCEL_LIMITS.maxCellChars
+        ? normalized.slice(0, TEST_EXCEL_LIMITS.maxCellChars) + '…'
+        : normalized
 }
 
 /**
@@ -222,14 +293,34 @@ async function extractImagesFromXlsx(uint8) {
 
     // 1. 读取 xl/media/ 下所有图片
     const mediaMap = {}
+    const imageStats = { retainedImages: 0, omittedImages: 0, totalImageBytes: 0 }
     for (const [path, file] of Object.entries(zip.files)) {
         if (!path.startsWith('xl/media/') || file.dir) continue
         const ext = path.split('.').pop().toLowerCase()
         const mime = EXT_MIME[ext]
         if (!mime) continue
+        const declaredSize = Number(file?._data?.uncompressedSize || 0)
+        if (
+            imageStats.retainedImages >= TEST_EXCEL_LIMITS.maxImages ||
+            declaredSize > TEST_EXCEL_LIMITS.maxImageBytes ||
+            (declaredSize > 0 && imageStats.totalImageBytes + declaredSize > TEST_EXCEL_LIMITS.maxTotalImageBytes)
+        ) {
+            imageStats.omittedImages += 1
+            continue
+        }
         try {
             const base64 = await file.async('base64')
+            const actualSize = Math.floor(base64.length * 3 / 4)
+            if (
+                actualSize > TEST_EXCEL_LIMITS.maxImageBytes ||
+                imageStats.totalImageBytes + actualSize > TEST_EXCEL_LIMITS.maxTotalImageBytes
+            ) {
+                imageStats.omittedImages += 1
+                continue
+            }
             mediaMap[path] = { dataUrl: `data:${mime};base64,${base64}`, fileName: path.split('/').pop() }
+            imageStats.retainedImages += 1
+            imageStats.totalImageBytes += actualSize
         } catch { /* skip */ }
     }
 
@@ -252,7 +343,7 @@ async function extractImagesFromXlsx(uint8) {
         }
     }
 
-    if (Object.keys(mediaMap).length === 0) return { imagesBySheetFile, sheetFileMapping }
+    if (Object.keys(mediaMap).length === 0) return { imagesBySheetFile, sheetFileMapping, imageStats }
 
     // 3. 遍历 sheet → drawing → images
     const sheetFiles = Object.values(sheetFileMapping)
@@ -321,5 +412,5 @@ async function extractImagesFromXlsx(uint8) {
         }
     }
 
-    return { imagesBySheetFile, sheetFileMapping }
+    return { imagesBySheetFile, sheetFileMapping, imageStats }
 }

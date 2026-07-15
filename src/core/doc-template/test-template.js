@@ -8,6 +8,8 @@ export { createSectionNode } from './template-presets.js'
 export { getEnabledLeafSections, countSections, flattenSections, findSectionById, renumberSections } from './srs-template.js'
 import { renumberSections } from './srs-template.js'
 
+const MAX_ROWS_PER_GENERATION_SECTION = 100
+
 /**
  * 创建默认测试用例模板
  */
@@ -54,8 +56,7 @@ function _inferGrouping(allRows, excelData) {
             map.get(key).push(row)
         }
         const groups = [...map.entries()].map(([name, rows]) => ({ name, rows }))
-        // 只有分组数 >= 2 且没有超大组时才认为此分组合理
-        if (groups.length >= 2 && groups.every(g => g.rows.length <= 60)) {
+        if (groups.length >= 2) {
             return { type: 'column', column: groupCol, groups }
         }
     }
@@ -72,6 +73,20 @@ function _inferGrouping(allRows, excelData) {
 
     // ③ 兜底：所有数据作为一个组
     return { type: 'single', groups: [{ name: '全部功能', rows: allRows }] }
+}
+
+function _chunkGroups(groups) {
+    return groups.flatMap(group => {
+        const chunkCount = Math.ceil(group.rows.length / MAX_ROWS_PER_GENERATION_SECTION)
+        if (chunkCount <= 1) return [group]
+        return Array.from({ length: chunkCount }, (_, chunkIndex) => ({
+            name: `${group.name}（${chunkIndex + 1}/${chunkCount}）`,
+            rows: group.rows.slice(
+                chunkIndex * MAX_ROWS_PER_GENERATION_SECTION,
+                (chunkIndex + 1) * MAX_ROWS_PER_GENERATION_SECTION,
+            ),
+        }))
+    })
 }
 
 /**
@@ -122,7 +137,7 @@ export function injectExcelSections(sections, excelData, mode = 'testcase') {
  */
 function _injectTestCaseSections(sections, allRows, excelData) {
     const headers = excelData.sheets[0]?.headers || []
-    const { groups } = _inferGrouping(allRows, excelData)
+    const groups = _chunkGroups(_inferGrouping(allRows, excelData).groups)
     const nameCol = _inferNameColumn(headers)
 
     const childSections = groups.map((group, idx) => {
@@ -185,7 +200,7 @@ Markdown 表格，列：用例编号、用例名称、前置条件、测试步�
  */
 function _injectTestRecordSections(sections, allRows, excelData) {
     const headers = excelData.sheets[0]?.headers || []
-    const { groups } = _inferGrouping(allRows, excelData)
+    const groups = _chunkGroups(_inferGrouping(allRows, excelData).groups)
 
     const childSections = groups.map((group, idx) => {
         const itemList = group.rows.map((row, i) => {

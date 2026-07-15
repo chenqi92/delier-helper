@@ -241,6 +241,9 @@
             <div class="stat-card"><div class="stat-value">{{ stats.estimatedPages }}</div><div class="stat-label">预计页数</div></div>
             <div class="stat-card"><div class="stat-value">{{ config.selectedExtensions.length }}</div><div class="stat-label">已选类型</div></div>
           </div>
+          <div v-if="stats.skippedOversizedFiles" class="tip" style="margin-top:8px;color:var(--warning-600);">
+            已跳过 {{ stats.skippedOversizedFiles }} 个超过 5MB 的超大源码文件
+          </div>
 
           <!-- 预览 -->
           <div class="card" style="flex:1;display:flex;flex-direction:column;">
@@ -266,9 +269,9 @@
               </div>
               <div v-if="previewData" style="margin-bottom:12px;display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
                 <span class="badge badge-primary">总计 {{ fmt(previewData.totalLines) }} 行</span>
-                <span class="badge badge-success">共 {{ previewPages.length }} 页</span>
+                <span class="badge badge-success">共 {{ previewPageCount }} 页</span>
                 <span v-if="previewData.isTruncated" class="badge badge-warning">
-                  已按比例截取{{ previewPages.length }}页
+                  已按比例截取 {{ previewPageCount }} 页
                 </span>
                 <span v-if="currentSeed" class="badge" style="background:var(--surface-100);color:var(--text-muted);font-size:11px;" :title="'种子编号，相同种子生成相同结果'">
                   种子 #{{ currentSeed }}
@@ -288,9 +291,17 @@
                     </div>
                   </div>
                   <div class="word-page-footer" :style="{ fontFamily: config.fontName }">
-                    第 {{ pi + 1 }} 页 共 {{ previewPages.length }} 页
+                    第 {{ pi + 1 }} 页 共 {{ previewPageCount }} 页
                   </div>
                 </div>
+                <button
+                  v-if="previewPages.length < previewPageCount"
+                  class="btn btn-secondary btn-sm"
+                  style="width:100%;margin-top:10px;"
+                  @click="visiblePreviewPageCount += previewPageSize"
+                >
+                  继续加载预览（已显示 {{ previewPages.length }}/{{ previewPageCount }} 页）
+                </button>
               </div>
             </div>
           </div>
@@ -318,7 +329,9 @@ import { savePageConfig, loadPageConfig, getSetting, setSetting, saveRecentProje
 import { saveHistoryRecord } from '../core/generation-history.js'
 
 const NON_CODE_EXTS = ['.json','.yaml','.yml','.toml','.ini','.cfg','.conf','.md','.txt','.csv','.log','.xml','.svg']
-const BATCH_SIZE = 50
+const BATCH_SIZE = 20
+const CANDIDATE_POOL_MULTIPLIER = 4
+const MAX_SOURCE_CODE_FILE_BYTES = 5 * 1024 * 1024
 
 export default {
   name: 'CopyrightGenerator',
@@ -358,8 +371,10 @@ export default {
       fontDropdownOpen: false,
       detecting: false, previewing: false, generating: false, processing: false,
       progress: 0, progressText: '',
-      stats: { totalFiles: 0, totalLines: 0, estimatedPages: 0 },
+      stats: { totalFiles: 0, totalLines: 0, estimatedPages: 0, skippedOversizedFiles: 0 },
       previewData: null, previewLines: [],
+      previewPageSize: 10,
+      visiblePreviewPageCount: 10,
       lastResult: null,
       dirResults: [],
       processedFontSize: null,
@@ -379,10 +394,14 @@ export default {
       if (!this.previewLines.length) return []
       const pages = []
       const lpp = this.config.linesPerPage || 50
-      for (let i = 0; i < this.previewLines.length; i += lpp) {
+      const visibleLineCount = this.visiblePreviewPageCount * lpp
+      for (let i = 0; i < Math.min(this.previewLines.length, visibleLineCount); i += lpp) {
         pages.push(this.previewLines.slice(i, i + lpp))
       }
       return pages
+    },
+    previewPageCount() {
+      return Math.ceil(this.previewLines.length / (this.config.linesPerPage || 50))
     },
     previewBodyStyle() {
       const fontSizePt = this.config.fontSize / 2
@@ -477,7 +496,7 @@ export default {
       if (!this.config.directories.length) {
         this.fileTypes = []; this.config.selectedExtensions = []
         this.previewData = null; this.dirResults = []
-        this.stats = { totalFiles: 0, totalLines: 0, estimatedPages: 0 }
+        this.stats = { totalFiles: 0, totalLines: 0, estimatedPages: 0, skippedOversizedFiles: 0 }
       }
     },
     rebalance() {
@@ -530,13 +549,16 @@ export default {
       this.processing = true; this.progress = 0; this.progressText = '正在扫描目录...'
 
       const dirFiles = []
+      let skippedOversizedFiles = 0
       for (const dir of this.config.directories) {
         const result = await invoke('scan_directory', {
           dirPath: dir.path,
           customIgnore: this.config.customIgnorePatterns,
           useGitignore: this.config.useGitignore,
         })
-        const filtered = result.files.filter(f => this.config.selectedExtensions.includes(f.ext))
+        const matched = result.files.filter(f => this.config.selectedExtensions.includes(f.ext))
+        const filtered = matched.filter(f => Number(f.size || 0) <= MAX_SOURCE_CODE_FILE_BYTES)
+        skippedOversizedFiles += matched.length - filtered.length
         const sorted = smartSortFiles(filtered)
         dirFiles.push({ path: dir.path, ratio: dir.ratio, files: sorted })
       }
@@ -544,12 +566,17 @@ export default {
       const totalFileCount = dirFiles.reduce((s, d) => s + d.files.length, 0)
       if (totalFileCount === 0) {
         this.processing = false
-        this.showToast('未找到匹配的代码文件', 'warning')
+        this.showToast(
+          skippedOversizedFiles > 0 ? '匹配的源码文件均超过 5MB，请拆分后重试' : '未找到匹配的代码文件',
+          'warning',
+        )
         return null
       }
 
       let processedCount = 0
       const dirResults = []
+      const maxOutputLines = this.config.maxPages * this.config.linesPerPage
+      const totalRatio = dirFiles.reduce((sum, dir) => sum + Math.max(0, Number(dir.ratio) || 0), 0) || 1
 
       // 按当前字号计算长行折行宽度，确保预览与 Word 导出页数一致
       const maxLineWidth = calcMaxLineWidth(this.config.fontSize)
@@ -557,8 +584,13 @@ export default {
       for (const dir of dirFiles) {
         const fileEntries = []
         let dirTotalLines = 0
+        const candidateLineLimit = Math.max(
+          this.config.linesPerPage * 2,
+          Math.ceil(maxOutputLines * CANDIDATE_POOL_MULTIPLIER * ((Number(dir.ratio) || 0) / totalRatio))
+        )
 
         for (let i = 0; i < dir.files.length; i += BATCH_SIZE) {
+          if (dirTotalLines >= candidateLineLimit) break
           const batch = dir.files.slice(i, i + BATCH_SIZE)
           this.progressText = `正在处理: ${dir.path.split(/[/\\]/).pop()} (${processedCount}/${totalFileCount})`
 
@@ -570,16 +602,20 @@ export default {
             if (fc.error || !fc.content) continue
             const result = processFileContent(fc.content, fc.ext, this.config.cleanOptions, maxLineWidth)
             if (result.lines.length > 0) {
+              const remainingCandidateLines = Math.max(0, candidateLineLimit - dirTotalLines)
+              const retainedLines = result.lines.slice(0, remainingCandidateLines)
+              if (retainedLines.length === 0) break
               fileEntries.push({
                 name: fc.name || fc.relative_path,
                 relative_path: fc.relative_path || '',
                 ext: fc.ext || '',
-                lines: result.lines,
-                lineCount: result.lines.length,
+                lines: retainedLines,
+                lineCount: retainedLines.length,
               })
-              dirTotalLines += result.lines.length
+              dirTotalLines += retainedLines.length
             }
             processedCount++
+            if (dirTotalLines >= candidateLineLimit) break
           }
           this.progress = Math.round((processedCount / totalFileCount) * 100)
         }
@@ -604,13 +640,14 @@ export default {
           Math.ceil(totalLines / this.config.linesPerPage),
           this.config.maxPages
         ),
+        skippedOversizedFiles,
       }
 
       this.processing = false
       this.progress = 100
       this.progressText = '处理完成'
 
-      return { totalLines, totalFiles: totalFileCount, dirResults }
+      return { totalLines, totalFiles: totalFileCount, dirResults, skippedOversizedFiles }
     },
 
     // ===== 预览 =====
@@ -633,6 +670,7 @@ export default {
           dirAllocations: allocResult.dirAllocations,
         }
         this.previewLines = allocResult.lines
+        this.visiblePreviewPageCount = this.previewPageSize
         this.showToast('预览已刷新', 'success')
       } catch (e) { this.showToast(String(e), 'error') }
       this.previewing = false
@@ -656,6 +694,7 @@ export default {
           dirAllocations: allocResult.dirAllocations,
         }
         this.previewLines = allocResult.lines
+        this.visiblePreviewPageCount = this.previewPageSize
         this.showToast('已切换为新的代码组合', 'success')
       } catch (e) { this.showToast(String(e), 'error') }
       this.previewing = false

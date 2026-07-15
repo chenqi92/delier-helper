@@ -224,9 +224,16 @@
               <span class="select-action" @click="selectAllTables">全选</span>
               <span class="select-action" @click="deselectAllTables">全不选</span>
             </div>
+            <input
+              v-if="schema.tables.length > tableSelectorLimit"
+              v-model.trim="tableSearch"
+              class="form-input"
+              style="width:100%;margin:6px 0;"
+              placeholder="搜索表名或备注"
+            />
             <div class="db-table-filter-list">
               <label
-                v-for="t in schema.tables"
+                v-for="t in selectableSchemaTables"
                 :key="t.name"
                 class="checkbox-label"
                 style="display:flex;margin-bottom:3px;"
@@ -239,6 +246,9 @@
                   </span>
                 </span>
               </label>
+            </div>
+            <div v-if="matchingSchemaTables.length > selectableSchemaTables.length" style="margin-top:6px;font-size:11px;color:var(--text-muted);">
+              当前显示前 {{ selectableSchemaTables.length }} 项，请输入关键词缩小范围
             </div>
           </div>
         </div>
@@ -382,7 +392,7 @@
 
           <!-- 表结构列表 -->
           <div v-show="viewMode === 'table'" class="api-preview-scroll">
-            <div v-for="(table, tIdx) in filteredTables" :key="table.name" class="api-module-group">
+            <div v-for="(table, tIdx) in visibleTables" :key="table.name" class="api-module-group">
               <div class="api-module-header" @click="toggleTableExpand(table.name)">
                 <div style="display:flex;align-items:center;gap:8px;">
                   <ChevronRight :size="14" :class="{'chevron-expanded': expandedTables.has(table.name)}" />
@@ -472,6 +482,14 @@
                 </div>
               </div>
             </div>
+            <button
+              v-if="visibleTables.length < filteredTables.length"
+              class="btn btn-secondary btn-sm"
+              style="width:100%;margin-top:8px;"
+              @click="visibleTableCount += tablePageSize"
+            >
+              继续加载（已显示 {{ visibleTables.length }}/{{ filteredTables.length }} 张表）
+            </button>
           </div>
         </template>
       </main>
@@ -513,6 +531,7 @@
 </template>
 
 <script>
+import { markRaw } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { save } from '@tauri-apps/plugin-dialog'
 import { writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
@@ -560,6 +579,10 @@ export default {
       dbVersion: '',
       schema: null,
       selectedTables: [],
+      tableSearch: '',
+      tableSelectorLimit: 300,
+      tablePageSize: 100,
+      visibleTableCount: 100,
       expandedTables: new Set(),
       viewMode: 'table', // 'table' | 'er' | 'relation'
       diagramScale: 1,
@@ -653,8 +676,31 @@ export default {
     },
     filteredTables() {
       if (!this.schema) return []
-      if (this.selectedTables.length === 0) return this.schema.tables
-      return this.schema.tables.filter(t => this.selectedTables.includes(t.name))
+      const selected = new Set(this.selectedTables)
+      return this.schema.tables.filter(t => selected.has(t.name))
+    },
+    matchingSchemaTables() {
+      if (!this.schema) return []
+      const query = this.tableSearch.toLowerCase()
+      if (!query) return this.schema.tables
+      return this.schema.tables.filter(table =>
+        `${table.name || ''} ${table.comment || ''}`.toLowerCase().includes(query)
+      )
+    },
+    selectableSchemaTables() {
+      return this.matchingSchemaTables.slice(0, this.tableSelectorLimit)
+    },
+    visibleTables() {
+      return this.filteredTables.slice(0, this.visibleTableCount)
+    },
+    columnsByTable() {
+      return this.groupSchemaItems(this.schema?.columns)
+    },
+    indexesByTable() {
+      return this.groupSchemaItems(this.schema?.indexes)
+    },
+    foreignKeysByTable() {
+      return this.groupSchemaItems(this.schema?.foreign_keys)
     },
     filteredColumns() {
       if (!this.schema) return []
@@ -878,8 +924,10 @@ export default {
         }
         const result = await invoke('db_fetch_schema', { config: configToSend })
         if (result.success && result.schema) {
-          this.schema = result.schema
+          this.schema = markRaw(result.schema)
           this.selectedTables = result.schema.tables.map(t => t.name)
+          this.tableSearch = ''
+          this.visibleTableCount = this.tablePageSize
           this.connStatus = 'connected'
           this.commentOverrides = {}
 
@@ -934,20 +982,25 @@ export default {
       this.expandedTables = s
     },
     getTableColCount(tableName) {
-      if (!this.schema) return 0
-      return this.schema.columns.filter(c => c.table_name === tableName).length
+      return this.columnsByTable.get(tableName)?.length || 0
     },
     getTableColumns(tableName) {
-      if (!this.schema) return []
-      return this.schema.columns.filter(c => c.table_name === tableName)
+      return this.columnsByTable.get(tableName) || []
     },
     getTableIndexes(tableName) {
-      if (!this.schema) return []
-      return this.schema.indexes.filter(i => i.table_name === tableName)
+      return this.indexesByTable.get(tableName) || []
     },
     getTableForeignKeys(tableName) {
-      if (!this.schema) return []
-      return this.schema.foreign_keys.filter(f => f.table_name === tableName)
+      return this.foreignKeysByTable.get(tableName) || []
+    },
+    groupSchemaItems(items = []) {
+      const grouped = new Map()
+      for (const item of items || []) {
+        const key = item.table_name
+        if (!grouped.has(key)) grouped.set(key, [])
+        grouped.get(key).push(item)
+      }
+      return grouped
     },
 
     // ===== 注释处理 =====
@@ -1463,7 +1516,7 @@ export default {
             this.aiProgressText = msg
           },
           (batchName, filled, batchTotal) => {
-            this.schema = { ...this.schema }
+            this.schema = markRaw({ ...this.schema })
           },
           controller,
         )

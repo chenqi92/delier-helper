@@ -47,6 +47,9 @@ async function initSchema() {
     CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)
   `)
     await _db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, created_at DESC, id DESC)
+  `)
+    await _db.execute(`
     CREATE TABLE IF NOT EXISTS recent_projects (
       path       TEXT NOT NULL,
       page       TEXT NOT NULL,
@@ -100,6 +103,10 @@ async function initSchema() {
     await _db.execute(`
     CREATE INDEX IF NOT EXISTS idx_generation_history_type_time
     ON generation_history(type, updated_at DESC)
+  `)
+    await _db.execute(`
+    CREATE INDEX IF NOT EXISTS idx_generation_history_time
+    ON generation_history(updated_at DESC)
   `)
     // 一次性清理重复的历史连接（保留每组 host+port+username+db_type 中 used_at 最大的一条）
     await _db.execute(`
@@ -185,13 +192,21 @@ export async function addMessage(conversationId, role, content, thinking = null,
 }
 
 /**
- * 获取某个对话的所有消息
+ * 分页获取某个对话的消息。offset 从最新一条向前计算，返回值保持时间正序。
  */
-export async function getMessages(conversationId) {
+export async function getMessages(conversationId, limit = 100, offset = 0) {
     const db = await getDb()
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100))
+    const safeOffset = Math.max(0, Number(offset) || 0)
     const rows = await db.select(
-        'SELECT id, role, content, thinking, images, created_at as createdAt FROM messages WHERE conversation_id = $1 ORDER BY created_at ASC',
-        [conversationId]
+        `SELECT * FROM (
+          SELECT id, role, content, thinking, images, created_at as createdAt
+          FROM messages
+          WHERE conversation_id = $1
+          ORDER BY created_at DESC, id DESC
+          LIMIT $2 OFFSET $3
+        ) ORDER BY createdAt ASC, id ASC`,
+        [conversationId, safeLimit, safeOffset]
     )
     return rows.map(r => ({
         ...r,
@@ -337,6 +352,20 @@ function normalizeHistoryRow(row) {
     }
 }
 
+function normalizeHistorySummaryRow(row) {
+    return {
+        id: row.id,
+        type: row.type,
+        title: row.title,
+        summary: row.summary || '',
+        status: row.status,
+        providerId: row.providerId || '',
+        modelId: row.modelId || '',
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+    }
+}
+
 export async function saveGenerationHistory(record = {}) {
     const db = await getDb()
     const now = Date.now()
@@ -368,29 +397,26 @@ export async function saveGenerationHistory(record = {}) {
 
 export async function getGenerationHistory({ type = '', limit = 100 } = {}) {
     const db = await getDb()
+    const safeLimit = Math.max(1, Math.min(500, Number(limit) || 100))
     const rows = type
         ? await db.select(
             `SELECT id, type, title, summary, status, provider_id as providerId, model_id as modelId,
-                    source_snapshot as sourceSnapshot, settings_snapshot as settingsSnapshot,
-                    result_snapshot as resultSnapshot, artifact_snapshot as artifactSnapshot,
                     created_at as createdAt, updated_at as updatedAt
              FROM generation_history
              WHERE type = $1
              ORDER BY updated_at DESC
              LIMIT $2`,
-            [type, limit]
+            [type, safeLimit]
         )
         : await db.select(
             `SELECT id, type, title, summary, status, provider_id as providerId, model_id as modelId,
-                    source_snapshot as sourceSnapshot, settings_snapshot as settingsSnapshot,
-                    result_snapshot as resultSnapshot, artifact_snapshot as artifactSnapshot,
                     created_at as createdAt, updated_at as updatedAt
              FROM generation_history
              ORDER BY updated_at DESC
              LIMIT $1`,
-            [limit]
+            [safeLimit]
         )
-    return rows.map(normalizeHistoryRow)
+    return rows.map(normalizeHistorySummaryRow)
 }
 
 export async function getGenerationHistoryItem(id) {

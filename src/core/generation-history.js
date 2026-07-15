@@ -125,20 +125,76 @@ export function sectionsArtifact(sections = [], docInfo = {}) {
 }
 
 export function apiArtifact(parseResult = null, docModules = []) {
-  return sanitizeForHistory({
+  const sourceModules = parseResult?.modules || []
+  const moduleLimit = 200
+  const apiLimitPerModule = 20
+  const apiCount = sourceModules.reduce((sum, mod) => sum + (mod.apis?.length || 0), 0)
+  const modules = sourceModules.slice(0, moduleLimit).map(mod => ({
+    name: mod.name,
+    className: mod.className,
+    file: mod.file,
+    apiCount: mod.apis?.length || 0,
+    apis: (mod.apis || []).slice(0, apiLimitPerModule).map(api => ({
+      method: api.method,
+      path: api.path,
+      summary: api.summary,
+      description: api.description,
+      methodName: api.methodName,
+    })),
+  }))
+
+  return {
     kind: 'api-doc',
     docModules,
-    modules: parseResult?.modules || [],
-  })
+    moduleCount: sourceModules.length,
+    apiCount,
+    truncated: sourceModules.length > modules.length
+      || sourceModules.some(mod => (mod.apis?.length || 0) > apiLimitPerModule),
+    modules,
+  }
 }
 
 export function dbArtifact(schema = null, exportOptions = {}, commentOverrides = {}) {
-  return sanitizeForHistory({
+  const sourceTables = schema?.tables || []
+  const sourceColumns = schema?.columns || []
+  const sourceIndexes = schema?.indexes || []
+  const sourceForeignKeys = schema?.foreign_keys || []
+  const tableLimit = 100
+  const columnLimitPerTable = 20
+  const selectedTables = sourceTables.slice(0, tableLimit)
+  const selectedNames = new Set(selectedTables.map(table => table.name))
+  const columnCounts = new Map()
+  for (const column of sourceColumns) {
+    columnCounts.set(column.table_name, (columnCounts.get(column.table_name) || 0) + 1)
+  }
+
+  const tables = selectedTables.map(table => ({
+    ...table,
+    columnCount: columnCounts.get(table.name) || 0,
+  }))
+  const columnsByTable = new Map()
+  for (const column of sourceColumns) {
+    if (!selectedNames.has(column.table_name)) continue
+    const list = columnsByTable.get(column.table_name) || []
+    if (list.length < columnLimitPerTable) list.push(column)
+    columnsByTable.set(column.table_name, list)
+  }
+  const columns = tables.flatMap(table => columnsByTable.get(table.name) || [])
+
+  return {
     kind: 'db-doc',
     exportOptions,
     commentOverrides,
-    schema,
-  })
+    tableCount: sourceTables.length,
+    columnCount: sourceColumns.length,
+    truncated: sourceTables.length > tables.length || sourceColumns.length > columns.length,
+    schema: {
+      tables,
+      columns,
+      indexes: sourceIndexes.filter(item => selectedNames.has(item.table_name)).slice(0, 500),
+      foreign_keys: sourceForeignKeys.filter(item => selectedNames.has(item.table_name)).slice(0, 500),
+    },
+  }
 }
 
 export function pptArtifact(deck = null, cfg = {}, template = null, styleId = '') {

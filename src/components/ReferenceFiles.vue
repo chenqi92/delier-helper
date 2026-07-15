@@ -38,8 +38,8 @@
       </div>
 
       <!-- 导入按钮 -->
-      <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;" @click="importFiles" :disabled="parsing">
-        <Plus :size="12" /> {{ parsing ? '解析中...' : '导入文件' }}
+      <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;" @click="importFiles" :disabled="parsing || files.length >= maxReferenceFiles">
+        <Plus :size="12" /> {{ parsing ? '解析中...' : `导入文件（${files.length}/${maxReferenceFiles}）` }}
       </button>
     </div>
   </div>
@@ -49,6 +49,8 @@
 import { Paperclip, FileText, Table2, FileImage, Plus, File } from 'lucide-vue-next'
 import { open } from '@tauri-apps/plugin-dialog'
 import { parseFile, getFileFilters } from '../core/doc-template/file-parser.js'
+
+const MAX_REFERENCE_FILES = 20
 
 export default {
   name: 'ReferenceFiles',
@@ -60,6 +62,7 @@ export default {
       files: [],
       parsing: false,
       previewIdx: -1,
+      maxReferenceFiles: MAX_REFERENCE_FILES,
     }
   },
   methods: {
@@ -70,7 +73,9 @@ export default {
         filters: getFileFilters(),
       })
       if (!selected) return
-      const paths = Array.isArray(selected) ? selected : [selected]
+      const selectedPaths = Array.isArray(selected) ? selected : [selected]
+      const uniquePaths = selectedPaths.filter(filePath => !this.files.some(f => f.path === filePath))
+      const paths = uniquePaths.slice(0, Math.max(0, MAX_REFERENCE_FILES - this.files.length))
       if (paths.length === 0) return
 
       this.parsing = true
@@ -99,7 +104,11 @@ export default {
       }
       this.parsing = false
       this.$emit('update-files', this.files)
-      this.showToast(`已导入 ${paths.length} 个文件`, 'success')
+      const omitted = uniquePaths.length - paths.length
+      this.showToast(
+        omitted > 0 ? `已导入 ${paths.length} 个文件，另有 ${omitted} 个超过数量上限` : `已导入 ${paths.length} 个文件`,
+        omitted > 0 ? 'warning' : 'success',
+      )
     },
     removeFile(idx) {
       this.files.splice(idx, 1)

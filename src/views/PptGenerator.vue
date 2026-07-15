@@ -186,8 +186,8 @@
                 <button class="img-del" @click="removeImage(idx)"><X :size="10" /></button>
               </div>
             </div>
-            <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;" @click="addImages">
-              <ImageIcon :size="14" /> 添加图片{{ images.length ? '（' + images.length + '）' : '' }}
+            <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:6px;" @click="addImages" :disabled="images.length >= maxPptImages">
+              <ImageIcon :size="14" /> 添加图片{{ images.length ? '（' + images.length + '/' + maxPptImages + '）' : '' }}
             </button>
           </div>
         </div>
@@ -299,7 +299,10 @@
               @click="selectSlide(i)">
               <div class="thumb-no">{{ i + 1 }}</div>
               <div class="thumb-canvas">
-                <SlideCanvas :slide="s" :width="148" :interactive="false" />
+                <SlideCanvas v-if="shouldRenderThumbnail(i)" :slide="s" :width="148" :interactive="false" />
+                <div v-else class="thumb-placeholder">
+                  <span>{{ s.title || s.content?.title || '未命名页面' }}</span>
+                </div>
                 <div v-if="s.pending" class="thumb-pending"></div>
               </div>
             </div>
@@ -399,6 +402,12 @@ import { renderDeckToPptx } from '../core/ppt/ppt-pptx-renderer.js'
 import { savePageConfig, loadPageConfig, getSetting, setSetting } from '../core/db.js'
 import { modelSnapshot, pptArtifact, saveHistoryRecord, scanSourceSnapshot } from '../core/generation-history.js'
 
+const MAX_PPT_IMAGES = 20
+const MAX_PPT_IMAGE_SOURCE_BYTES = 12 * 1024 * 1024
+const MAX_PPT_IMAGE_DATA_BYTES = 4 * 1024 * 1024
+const MAX_PPT_IMAGE_DIMENSION = 1920
+const PPT_THUMBNAIL_RADIUS = 4
+
 export default {
   name: 'PptGenerator',
   components: {
@@ -429,6 +438,7 @@ export default {
       templateNameDraft: '',
       templateNameError: '',
       images: [],
+      maxPptImages: MAX_PPT_IMAGES,
       analyzing: false,
       lastStyleId: null,
       aiProcessing: false,
@@ -597,31 +607,83 @@ export default {
     },
 
     // ===== 图片素材 =====
-    bytesToDataUrl(bytes, mime) {
-      return new Promise((resolve, reject) => {
-        const fr = new FileReader()
-        fr.onload = () => resolve(fr.result)
-        fr.onerror = reject
-        fr.readAsDataURL(new Blob([bytes], { type: mime }))
-      })
-    },
     mimeOf(path) {
       const ext = String(path).split('.').pop().toLowerCase()
       return ext === 'png' ? 'image/png' : ext === 'gif' ? 'image/gif' : ext === 'webp' ? 'image/webp' : ext === 'bmp' ? 'image/bmp' : 'image/jpeg'
     },
     async readImageDataUrl(path) {
       const bytes = await readFile(path)
-      return this.bytesToDataUrl(bytes, this.mimeOf(path))
+      if (bytes.byteLength > MAX_PPT_IMAGE_SOURCE_BYTES) {
+        throw new Error(`原图超过 ${MAX_PPT_IMAGE_SOURCE_BYTES / 1024 / 1024} MB`)
+      }
+      return this.compressImageBytes(bytes, this.mimeOf(path))
+    },
+    compressImageBytes(bytes, mime) {
+      return new Promise((resolve, reject) => {
+        const objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }))
+        const img = new Image()
+        img.onload = () => {
+          URL.revokeObjectURL(objectUrl)
+          let width = img.naturalWidth || img.width
+          let height = img.naturalHeight || img.height
+          if (!width || !height) {
+            reject(new Error('无法识别图片尺寸'))
+            return
+          }
+          const scale = Math.min(1, MAX_PPT_IMAGE_DIMENSION / Math.max(width, height))
+          width = Math.max(1, Math.round(width * scale))
+          height = Math.max(1, Math.round(height * scale))
+
+          const render = (type, quality) => {
+            const canvas = document.createElement('canvas')
+            canvas.width = width
+            canvas.height = height
+            const ctx = canvas.getContext('2d')
+            if (type === 'image/jpeg') {
+              ctx.fillStyle = '#FFFFFF'
+              ctx.fillRect(0, 0, width, height)
+            }
+            ctx.drawImage(img, 0, 0, width, height)
+            return canvas.toDataURL(type, quality)
+          }
+
+          let dataUrl = render(mime === 'image/png' ? 'image/png' : 'image/jpeg', 0.82)
+          let dataBytes = Math.floor((dataUrl.length - dataUrl.indexOf(',') - 1) * 3 / 4)
+          if (dataBytes > MAX_PPT_IMAGE_DATA_BYTES) {
+            dataUrl = render('image/jpeg', 0.72)
+            dataBytes = Math.floor((dataUrl.length - dataUrl.indexOf(',') - 1) * 3 / 4)
+          }
+          if (dataBytes > MAX_PPT_IMAGE_DATA_BYTES) {
+            reject(new Error(`压缩后仍超过 ${MAX_PPT_IMAGE_DATA_BYTES / 1024 / 1024} MB`))
+            return
+          }
+          resolve(dataUrl)
+        }
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl)
+          reject(new Error('图片解码失败'))
+        }
+        img.src = objectUrl
+      })
     },
     async addImages() {
       const picked = await open({ multiple: true, title: '选择图片', filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'] }] })
       if (!picked) return
       const list = Array.isArray(picked) ? picked : [picked]
-      for (const p of list) {
+      const capacity = Math.max(0, MAX_PPT_IMAGES - this.images.length)
+      const selected = list.slice(0, capacity)
+      let failed = list.length - selected.length
+      for (const p of selected) {
         try {
           const src = await this.readImageDataUrl(p)
           this.images.push({ name: p.split(/[\\/]/).pop(), src })
-        } catch (e) { this.showToast('读取图片失败: ' + String(e), 'error') }
+        } catch (e) {
+          failed += 1
+          console.warn('PPT 图片读取失败:', p, e)
+        }
+      }
+      if (failed > 0) {
+        this.showToast(`${failed} 张图片因数量、尺寸或格式限制未添加`, 'warning')
       }
     },
     removeImage(idx) { this.images.splice(idx, 1) },
@@ -643,6 +705,9 @@ export default {
         content.imageSrcs = Array.from({ length: n }, (_, i) => srcs[(ptr.v + i) % srcs.length])
         ptr.v += n
       }
+    },
+    shouldRenderThumbnail(index) {
+      return Math.abs(index - this.currentSlideIndex) <= PPT_THUMBNAIL_RADIUS
     },
     templatePreviewStyleId(t) {
       if (t?.id === 'ppt-auto') {
@@ -1354,5 +1419,19 @@ export default {
 .thumb-no { font-size: 10px; color: var(--text-muted); }
 .thumb-canvas { position: relative; border: 2px solid transparent; border-radius: 4px; overflow: hidden; line-height: 0; }
 .thumb.active .thumb-canvas { border-color: var(--primary-500); }
+.thumb-placeholder {
+  width: 148px;
+  height: 83px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  box-sizing: border-box;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.35;
+  text-align: center;
+}
 .thumb-pending { position: absolute; inset: 0; background: repeating-linear-gradient(45deg, rgba(99,102,241,0.06), rgba(99,102,241,0.06) 6px, transparent 6px, transparent 12px); }
 </style>

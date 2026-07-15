@@ -296,15 +296,18 @@ export async function parseSpringBootProject(javaFiles, onProgress) {
     log(`发现 ${controllers.length} 个 Controller 类`, 25)
 
     const modules = []
+    let lastLoggedPercent = -1
 
     for (let i = 0; i < controllers.length; i++) {
         const controller = controllers[i]
         const pct = 25 + Math.round((i / controllers.length) * 70)
-        log(`正在解析 Controller (${i + 1}/${controllers.length}): ${controller.name}`, pct)
+        if (pct !== lastLoggedPercent || i === controllers.length - 1) {
+            lastLoggedPercent = pct
+            log(`正在解析 Controller (${i + 1}/${controllers.length}): ${controller.name}`, pct)
+        }
 
         try {
-            const methodLog = (msg) => log(msg, pct)
-            const module = await parseController(controller, typeIndex, methodLog)
+            const module = await parseController(controller, typeIndex)
             if (module && module.apis.length > 0) {
                 modules.push(module)
             }
@@ -313,8 +316,8 @@ export async function parseSpringBootProject(javaFiles, onProgress) {
             console.error(`[api-doc] 解析 Controller 失败: ${controller.name}`, e)
         }
 
-        // 每解析 1 个 Controller yield 一次，让 UI 更新
-        if (i % 1 === 0) {
+        // 分片让出主线程即可；逐 Controller/逐接口 setTimeout 会制造大量任务和重排。
+        if ((i + 1) % 10 === 0) {
             await new Promise(r => setTimeout(r, 0))
         }
     }
@@ -531,8 +534,6 @@ async function parseControllerMethods(content, basePath, typeIndex, log) {
         if (!summary) summary = javadoc.summary
         if (!summary) summary = methodName
 
-        if (log) log(`  → ${httpMethod} ${fullPath} (${summary})`)
-
         // 参数
         const { params, requestBodyType } = parseMethodParams(paramString, annotationBlock)
         for (const p of params) {
@@ -581,8 +582,9 @@ async function parseControllerMethods(content, basePath, typeIndex, log) {
             response,
         })
 
-        // 每个方法后 yield 一次让 UI 更新
-        await new Promise(r => setTimeout(r, 0))
+        if (apis.length % 100 === 0) {
+            await new Promise(r => setTimeout(r, 0))
+        }
     }
 
     return apis

@@ -3,11 +3,12 @@
  * 支持解析 Word (.docx)、Excel (.xlsx/.xls)、PDF (.pdf)、Markdown (.md)、文本 (.txt/.csv) 文件
  * 提取文本内容供 LLM 作为参考上下文
  */
-import { readTextFile } from '@tauri-apps/plugin-fs'
+import { readTextFile, stat } from '@tauri-apps/plugin-fs'
 import { invoke } from '@tauri-apps/api/core'
 
 /** 最大提取内容长度（字符数） */
 const MAX_CONTENT_LENGTH = 8000
+const MAX_SOURCE_FILE_BYTES = 30 * 1024 * 1024
 
 /**
  * 支持的文件扩展名
@@ -48,6 +49,10 @@ export async function parseFile(filePath) {
 
     try {
         result.parsing = true
+        const fileInfo = await stat(filePath)
+        if (fileInfo.size > MAX_SOURCE_FILE_BYTES) {
+            throw new Error(`文件超过 ${MAX_SOURCE_FILE_BYTES / 1024 / 1024} MB，请拆分后导入`)
+        }
         switch (ext) {
             case '.docx':
                 result.content = await parseDocx(filePath)
