@@ -263,11 +263,10 @@ function extractFieldInfo(fieldName, fieldType, annotationBlock, rawLine) {
 /**
  * 构建类型索引（类名 -> 解析结果）
  * @param {Array<{name: string, content: string}>} javaFiles - Java 文件列表
+ * @param {Map} [index] - 可复用索引；用于分批读取后立即释放源码
  * @returns {Map<string, { className: string, fields: Array, superClass: string|null }>}
  */
-export function buildTypeIndex(javaFiles) {
-    const index = new Map()
-
+export function buildTypeIndex(javaFiles, index = new Map()) {
     for (const file of javaFiles) {
         // 一个文件可能有内部类，但主要关注主类
         const parsed = parseJavaClass(file.content)
@@ -317,8 +316,8 @@ export function resolveTypeFields(typeName, typeIndex, visited = new Set(), dept
     const classDef = typeIndex.get(typeName)
     if (!classDef) return []
 
-    let fields = classDef.fields.slice(0, 50) // 截断过多字段
-    fields = [...fields]
+    // 必须复制字段对象：泛型展开会改写 data 字段，不能污染全局类型索引。
+    let fields = classDef.fields.slice(0, 50).map(field => ({ ...field }))
 
     // 处理继承
     if (classDef.superClass) {

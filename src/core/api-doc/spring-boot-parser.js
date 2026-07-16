@@ -3,7 +3,7 @@
  * 解析 Controller 类，提取接口信息
  */
 
-import { buildTypeIndex, resolveTypeFields, generateExampleValue, extractGenericType, isPrimitiveType } from './java-type-resolver.js'
+import { buildTypeIndex, resolveTypeFields, isPrimitiveType } from './java-type-resolver.js'
 
 /**
  * 占位符前缀，便于 AI 模型识别和替换
@@ -290,81 +290,105 @@ export async function parseSpringBootProject(javaFiles, onProgress) {
     log(`类型索引构建完成，共索引 ${typeIndex.size} 个类`, 20)
 
     // 2. 找到所有 Controller 类
-    const controllers = javaFiles.filter(f =>
-        /@(?:Rest)?Controller\b/.test(f.content)
-    )
+    const controllers = []
+    for (const file of javaFiles) {
+        if (/@(?:Rest)?Controller\b/.test(file.content)) controllers.push(file)
+        else file.content = '' // DTO 已进入 typeIndex，立即释放其源码字符串。
+    }
     log(`发现 ${controllers.length} 个 Controller 类`, 25)
 
-    const modules = []
+    const session = createSpringBootParseSession(typeIndex)
     let lastLoggedPercent = -1
-
-    for (let i = 0; i < controllers.length; i++) {
-        const controller = controllers[i]
-        const pct = 25 + Math.round((i / controllers.length) * 70)
-        if (pct !== lastLoggedPercent || i === controllers.length - 1) {
-            lastLoggedPercent = pct
-            log(`正在解析 Controller (${i + 1}/${controllers.length}): ${controller.name}`, pct)
-        }
-
-        try {
-            const module = await parseController(controller, typeIndex)
-            if (module && module.apis.length > 0) {
-                modules.push(module)
+    const modules = await session.parseControllers(controllers, {
+        onController(controller, i, total) {
+            const pct = 25 + Math.round((i / Math.max(1, total)) * 70)
+            if (pct !== lastLoggedPercent || i === total - 1) {
+                lastLoggedPercent = pct
+                log(`正在解析 Controller (${i + 1}/${total}): ${controller.name}`, pct)
             }
-        } catch (e) {
-            log(`[警告] 解析 ${controller.name} 失败: ${e.message}`, pct)
-            console.error(`[api-doc] 解析 Controller 失败: ${controller.name}`, e)
-        }
-
-        // 分片让出主线程即可；逐 Controller/逐接口 setTimeout 会制造大量任务和重排。
-        if ((i + 1) % 10 === 0) {
-            await new Promise(r => setTimeout(r, 0))
-        }
-    }
-
-    // 后处理：为缺失描述的接口和参数填充占位符
-    for (const mod of modules) {
-        for (const api of mod.apis) {
-            // 接口描述占位符
-            if (!api.description) {
-                api.description = makePlaceholder('接口说明', api.methodName)
-            }
-
-            // 参数描述占位符
-            for (const p of api.params) {
-                if (!p.description) {
-                    p.description = makePlaceholder('参数说明', p.name)
-                }
-            }
-
-            // 请求体字段描述占位符
-            if (api.requestBody) {
-                for (const f of api.requestBody.fields) {
-                    if (!f.description) {
-                        f.description = makePlaceholder('字段说明', f.name)
-                    }
-                }
-            }
-
-            // 返回数据字段描述占位符
-            if (api.response) {
-                for (const f of api.response.fields) {
-                    if (!f.description) {
-                        f.description = makePlaceholder('字段说明', f.name)
-                    }
-                }
-            }
-        }
-    }
+        },
+        onWarning(controller, error) {
+            log(`[警告] 解析 ${controller.name} 失败: ${error.message}`, 95)
+        },
+    })
+    session.dispose()
 
     log(`解析完成！共 ${modules.length} 个模块`, 100)
     return { modules }
 }
 
+function fillMissingDescriptions(modules) {
+    for (const mod of modules) {
+        for (const api of mod.apis) {
+            if (!api.description) api.description = makePlaceholder('接口说明', api.methodName)
+            for (const p of api.params) {
+                if (!p.description) p.description = makePlaceholder('参数说明', p.name)
+            }
+            for (const f of api.requestBody?.fields || []) {
+                if (!f.description) f.description = makePlaceholder('字段说明', f.name)
+            }
+            for (const f of api.response?.fields || []) {
+                if (!f.description) f.description = makePlaceholder('字段说明', f.name)
+            }
+        }
+    }
+}
+
+/**
+ * 创建可跨批次复用的 Controller 解析会话。
+ * typeIndex 在第一遍扫描中增量构建；第二遍只读取 Controller，解析完一批即可入库并释放。
+ */
+export function createSpringBootParseSession(typeIndex) {
+    const resolvedFieldsCache = new Map()
+    const resolveFields = typeName => {
+        if (!resolvedFieldsCache.has(typeName)) {
+            resolvedFieldsCache.set(typeName, resolveTypeFields(typeName, typeIndex))
+        }
+        return resolvedFieldsCache.get(typeName)
+    }
+    const resolvedBodyCache = new Map()
+    const resolveBody = typeName => {
+        if (!resolvedBodyCache.has(typeName)) {
+            resolvedBodyCache.set(typeName, {
+                type: typeName,
+                fields: resolveFields(typeName),
+            })
+        }
+        return resolvedBodyCache.get(typeName)
+    }
+
+    return {
+        async parseControllers(controllers, options = {}) {
+            const modules = []
+            for (let i = 0; i < controllers.length; i++) {
+                const controller = controllers[i]
+                options.onController?.(controller, i, controllers.length)
+                try {
+                    const module = await parseController(controller, resolveBody)
+                    if (module?.apis.length > 0) modules.push(module)
+                } catch (error) {
+                    options.onWarning?.(controller, error)
+                    console.error(`[api-doc] 解析 Controller 失败: ${controller.name}`, error)
+                } finally {
+                    controller.content = ''
+                }
+                if ((i + 1) % 10 === 0) await new Promise(resolve => setTimeout(resolve, 0))
+            }
+            fillMissingDescriptions(modules)
+            return modules
+        },
+        dispose() {
+            resolvedFieldsCache.clear()
+            resolvedBodyCache.clear()
+            typeIndex.clear()
+        },
+    }
+}
+
 /**
  * 解析单个 Controller 文件
  */
-async function parseController(file, typeIndex, log) {
+async function parseController(file, resolveBody, log) {
     const content = file.content
 
     // 提取类名
@@ -413,7 +437,7 @@ async function parseController(file, typeIndex, log) {
     }
 
     // 解析方法（async，传递 log）
-    const apis = await parseControllerMethods(content, basePath, typeIndex, log)
+    const apis = await parseControllerMethods(content, basePath, resolveBody, log)
 
     return {
         name: moduleName,
@@ -428,7 +452,7 @@ async function parseController(file, typeIndex, log) {
 /**
  * 解析 Controller 中的所有接口方法（异步 + 逐行扫描）
  */
-async function parseControllerMethods(content, basePath, typeIndex, log) {
+async function parseControllerMethods(content, basePath, resolveBody, log) {
     const apis = []
     const lines = content.split('\n')
     const MAPPING_KEYS = Object.keys(MAPPING_ANNOTATIONS)
@@ -546,11 +570,7 @@ async function parseControllerMethods(content, basePath, typeIndex, log) {
         let requestBody = null
         if (requestBodyType) {
             try {
-                requestBody = {
-                    type: requestBodyType,
-                    fields: resolveTypeFields(requestBodyType, typeIndex),
-                    example: generateExampleValue(requestBodyType, typeIndex),
-                }
+                requestBody = resolveBody(requestBodyType)
             } catch (e) {
                 requestBody = { type: requestBodyType, fields: [], example: null }
             }
@@ -561,11 +581,7 @@ async function parseControllerMethods(content, basePath, typeIndex, log) {
         const cleanReturn = returnType.replace(/ResponseEntity<(.+)>/, '$1')
         if (cleanReturn && cleanReturn !== 'void' && cleanReturn !== 'Void') {
             try {
-                response = {
-                    type: cleanReturn,
-                    fields: resolveTypeFields(cleanReturn, typeIndex),
-                    example: generateExampleValue(cleanReturn, typeIndex),
-                }
+                response = resolveBody(cleanReturn)
             } catch (e) {
                 response = { type: cleanReturn, fields: [], example: null }
             }

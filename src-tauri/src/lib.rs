@@ -1,3 +1,4 @@
+mod api_doc_store;
 mod commands;
 mod db_connector;
 mod oracle_setup;
@@ -21,6 +22,14 @@ pub fn run() {
         )
         .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
+            api_doc_store::api_doc_create_job,
+            api_doc_store::api_doc_append_modules,
+            api_doc_store::api_doc_finish_job,
+            api_doc_store::api_doc_get_job,
+            api_doc_store::api_doc_list_modules,
+            api_doc_store::api_doc_query_apis,
+            api_doc_store::api_doc_update_apis,
+            api_doc_store::api_doc_delete_job,
             commands::scan_directory,
             commands::detect_file_types,
             commands::read_files_content,
@@ -36,6 +45,9 @@ pub fn run() {
             ssh_connector::ssh_read_server_info,
         ])
         .setup(|app| {
+            let api_doc_data_dir = app.path().app_data_dir()?;
+            app.manage(api_doc_store::ApiDocStore::new(api_doc_data_dir));
+
             #[cfg(desktop)]
             app.handle()
                 .plugin(tauri_plugin_updater::Builder::new().build())?;

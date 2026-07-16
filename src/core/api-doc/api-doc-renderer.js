@@ -5,6 +5,7 @@
 
 import { Document, Paragraph, Table, TableRow, TableCell, TextRun, HeadingLevel, BorderStyle, WidthType, AlignmentType, Packer } from 'docx'
 import { isPlaceholder } from './spring-boot-parser.js'
+import { createApiSchemaAccessor } from './api-schema-accessor.js'
 
 /**
  * 导出时过滤占位符：占位符文本替换为 '-'
@@ -48,6 +49,9 @@ export const METHOD_COLORS = {
  */
 export function renderMarkdown(parseResult, docModules) {
     const enabledIds = docModules.filter(m => m.enabled).map(m => m.id)
+    const schema = createApiSchemaAccessor(parseResult, { maxExampleCache: 300 })
+    const bodyFields = body => schema.getFields(body)
+    const bodyExample = body => schema.getExample(body)
     const lines = []
 
     lines.push('# 接口文档\n')
@@ -90,10 +94,10 @@ export function renderMarkdown(parseResult, docModules) {
                         }
                         if (api.requestBody) {
                             lines.push(`**请求体 (${api.requestBody.type})：**\n`)
-                            if (api.requestBody.fields.length > 0) {
+                            if (bodyFields(api.requestBody).length > 0) {
                                 lines.push('| 参数名 | 类型 | 是否必须 | 说明 |')
                                 lines.push('|--------|------|----------|------|')
-                                for (const f of api.requestBody.fields) {
+                                for (const f of bodyFields(api.requestBody)) {
                                     lines.push(`| ${f.name} | ${f.type} | ${f.required ? '是' : '否'} | ${exportText(f.description)} |`)
                                 }
                                 lines.push('')
@@ -101,29 +105,29 @@ export function renderMarkdown(parseResult, docModules) {
                         }
                         break
                     case 'response':
-                        if (api.response && api.response.fields.length > 0) {
+                        if (api.response && bodyFields(api.response).length > 0) {
                             lines.push(`**返回数据 (${api.response.type})：**\n`)
                             lines.push('| 参数名 | 类型 | 说明 |')
                             lines.push('|--------|------|------|')
-                            for (const f of api.response.fields) {
+                            for (const f of bodyFields(api.response)) {
                                 lines.push(`| ${f.name} | ${f.type} | ${exportText(f.description)} |`)
                             }
                             lines.push('')
                         }
                         break
                     case 'requestExample':
-                        if (api.requestBody && api.requestBody.example) {
+                        if (api.requestBody && bodyExample(api.requestBody)) {
                             lines.push('**请求示例：**\n')
                             lines.push('```json')
-                            lines.push(JSON.stringify(api.requestBody.example, null, 2))
+                            lines.push(JSON.stringify(bodyExample(api.requestBody), null, 2))
                             lines.push('```\n')
                         }
                         break
                     case 'responseExample':
-                        if (api.response && api.response.example) {
+                        if (api.response && bodyExample(api.response)) {
                             lines.push('**返回示例：**\n')
                             lines.push('```json')
-                            lines.push(JSON.stringify(api.response.example, null, 2))
+                            lines.push(JSON.stringify(bodyExample(api.response), null, 2))
                             lines.push('```\n')
                         }
                         break
@@ -187,6 +191,9 @@ function makeHeaderCell(text, width) {
  */
 export async function renderDocx(parseResult, docModules) {
     const enabledIds = docModules.filter(m => m.enabled).map(m => m.id)
+    const schema = createApiSchemaAccessor(parseResult, { maxExampleCache: 300 })
+    const bodyFields = body => schema.getFields(body)
+    const bodyExample = body => schema.getExample(body)
     const sections = []
     const children = []
 
@@ -283,7 +290,7 @@ export async function renderDocx(parseResult, docModules) {
                             children.push(new Table({ rows, width: { size: 100, type: WidthType.PERCENTAGE }, borders: TABLE_BORDERS }))
                         }
                         // 请求体参数表
-                        if (api.requestBody && api.requestBody.fields.length > 0) {
+                        if (api.requestBody && bodyFields(api.requestBody).length > 0) {
                             children.push(new Paragraph({
                                 children: [makeText(`请求体 (${api.requestBody.type})：`, { size: 21, bold: true })],
                                 spacing: { before: 100, after: 60 },
@@ -297,7 +304,7 @@ export async function renderDocx(parseResult, docModules) {
                                         makeHeaderCell('说明', 40),
                                     ],
                                 }),
-                                ...api.requestBody.fields.map(f => new TableRow({
+                                ...bodyFields(api.requestBody).map(f => new TableRow({
                                     children: [
                                         makeCell(f.name),
                                         makeCell(f.type),
@@ -312,7 +319,7 @@ export async function renderDocx(parseResult, docModules) {
                     }
 
                     case 'response': {
-                        if (api.response && api.response.fields.length > 0) {
+                        if (api.response && bodyFields(api.response).length > 0) {
                             children.push(new Paragraph({
                                 children: [makeText(`返回数据 (${api.response.type})：`, { size: 21, bold: true })],
                                 spacing: { before: 100, after: 60 },
@@ -325,7 +332,7 @@ export async function renderDocx(parseResult, docModules) {
                                         makeHeaderCell('说明', 45),
                                     ],
                                 }),
-                                ...api.response.fields.map(f => new TableRow({
+                                ...bodyFields(api.response).map(f => new TableRow({
                                     children: [
                                         makeCell(f.name),
                                         makeCell(f.type),
@@ -339,12 +346,12 @@ export async function renderDocx(parseResult, docModules) {
                     }
 
                     case 'requestExample':
-                        if (api.requestBody && api.requestBody.example) {
+                        if (api.requestBody && bodyExample(api.requestBody)) {
                             children.push(new Paragraph({
                                 children: [makeText('请求示例：', { size: 21, bold: true })],
                                 spacing: { before: 100, after: 60 },
                             }))
-                            const reqJsonLines = JSON.stringify(api.requestBody.example, null, 4).split('\n')
+                            const reqJsonLines = JSON.stringify(bodyExample(api.requestBody), null, 4).split('\n')
                             for (const jLine of reqJsonLines) {
                                 children.push(new Paragraph({
                                     children: [new TextRun({ text: jLine, font: 'Consolas', size: 17, color: '333333' })],
@@ -357,12 +364,12 @@ export async function renderDocx(parseResult, docModules) {
                         break
 
                     case 'responseExample':
-                        if (api.response && api.response.example) {
+                        if (api.response && bodyExample(api.response)) {
                             children.push(new Paragraph({
                                 children: [makeText('返回示例：', { size: 21, bold: true })],
                                 spacing: { before: 100, after: 60 },
                             }))
-                            const resJsonLines = JSON.stringify(api.response.example, null, 4).split('\n')
+                            const resJsonLines = JSON.stringify(bodyExample(api.response), null, 4).split('\n')
                             for (const jLine of resJsonLines) {
                                 children.push(new Paragraph({
                                     children: [new TextRun({ text: jLine, font: 'Consolas', size: 17, color: '333333' })],

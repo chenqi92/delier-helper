@@ -2022,6 +2022,7 @@ function isApiPlaceholder(text) {
 
 export function collectApiDocPlaceholders(parseResult) {
     const items = []
+    const seenSchemaFields = new WeakSet()
     if (!parseResult || !parseResult.modules) return items
 
     for (const mod of parseResult.modules) {
@@ -2074,7 +2075,9 @@ export function collectApiDocPlaceholders(parseResult) {
             }
 
             if (api.requestBody) {
-                for (const f of api.requestBody.fields) {
+                for (const f of api.requestBody.fields || []) {
+                    if (seenSchemaFields.has(f)) continue
+                    seenSchemaFields.add(f)
                     if (isApiPlaceholder(f.description)) {
                         items.push({
                             type: 'request_field_description',
@@ -2090,7 +2093,9 @@ export function collectApiDocPlaceholders(parseResult) {
             }
 
             if (api.response) {
-                for (const f of api.response.fields) {
+                for (const f of api.response.fields || []) {
+                    if (seenSchemaFields.has(f)) continue
+                    seenSchemaFields.add(f)
                     if (isApiPlaceholder(f.description)) {
                         items.push({
                             type: 'response_field_description',
@@ -2168,12 +2173,14 @@ export function buildApiDocPrompt(placeholders) {
  */
 function collectApiExampleItems(parseResult) {
     const items = []
+    const seenBodies = new WeakSet()
     if (!parseResult || !parseResult.modules) return items
 
     for (const mod of parseResult.modules) {
         for (const api of mod.apis) {
             // 请求体示例
-            if (api.requestBody && api.requestBody.example) {
+            if (api.requestBody && !api.requestBody._skipAiExample && !seenBodies.has(api.requestBody) && api.requestBody.fields?.length) {
+                seenBodies.add(api.requestBody)
                 items.push({
                     key: `${mod.className}.${api.methodName}.requestExample`,
                     type: 'request_example',
@@ -2186,7 +2193,8 @@ function collectApiExampleItems(parseResult) {
                 })
             }
             // 返回示例
-            if (api.response && api.response.example) {
+            if (api.response && !api.response._skipAiExample && !seenBodies.has(api.response) && api.response.fields?.length) {
+                seenBodies.add(api.response)
                 items.push({
                     key: `${mod.className}.${api.methodName}.responseExample`,
                     type: 'response_example',

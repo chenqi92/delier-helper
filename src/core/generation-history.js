@@ -128,12 +128,12 @@ export function apiArtifact(parseResult = null, docModules = []) {
   const sourceModules = parseResult?.modules || []
   const moduleLimit = 200
   const apiLimitPerModule = 20
-  const apiCount = sourceModules.reduce((sum, mod) => sum + (mod.apis?.length || 0), 0)
+  const apiCount = sourceModules.reduce((sum, mod) => sum + Number(mod.apiCount ?? mod.apis?.length ?? 0), 0)
   const modules = sourceModules.slice(0, moduleLimit).map(mod => ({
     name: mod.name,
     className: mod.className,
     file: mod.file,
-    apiCount: mod.apis?.length || 0,
+    apiCount: Number(mod.apiCount ?? mod.apis?.length ?? 0),
     apis: (mod.apis || []).slice(0, apiLimitPerModule).map(api => ({
       method: api.method,
       path: api.path,
@@ -149,7 +149,7 @@ export function apiArtifact(parseResult = null, docModules = []) {
     moduleCount: sourceModules.length,
     apiCount,
     truncated: sourceModules.length > modules.length
-      || sourceModules.some(mod => (mod.apis?.length || 0) > apiLimitPerModule),
+      || sourceModules.some(mod => Number(mod.apiCount ?? mod.apis?.length ?? 0) > apiLimitPerModule),
     modules,
   }
 }

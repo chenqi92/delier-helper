@@ -40,10 +40,10 @@
             <option v-for="m in currentProviderModels" :key="m.id" :value="m.id">{{ m.label || m.id }}</option>
           </select>
         </div>
-        <button class="btn btn-primary btn-sm" @click="exportWord" :disabled="!parseResult">
-          <FileDown :size="14" /> 导出 Word
+        <button class="btn btn-primary btn-sm" @click="exportWord" :disabled="!parseResult || exporting">
+          <FileDown :size="14" /> {{ exporting ? '导出中...' : '导出 Word' }}
         </button>
-        <button class="btn btn-secondary btn-sm" @click="exportMarkdown" :disabled="!parseResult">
+        <button class="btn btn-secondary btn-sm" @click="exportMarkdown" :disabled="!parseResult || exporting">
           <FileDown :size="14" /> 导出 MD
         </button>
       </div>
@@ -127,7 +127,7 @@
               />
             </div>
             <label class="checkbox-label">
-              <input type="checkbox" v-model="groupByController" />
+              <input type="checkbox" v-model="groupByController" @change="onGroupModeChange" />
               按 Controller 分组
             </label>
             <label class="checkbox-label">
@@ -156,8 +156,8 @@
             />
             <div style="max-height:160px;overflow-y:auto;">
               <label v-for="mod in selectableModules" :key="mod.className" class="checkbox-label" style="display:flex;margin-bottom:4px;">
-                <input type="checkbox" :value="mod.className" v-model="selectedModules" />
-                <span>{{ mod.name }} <span style="color:var(--text-muted);font-size:11px;">({{ mod.apis.length }})</span></span>
+                <input type="checkbox" :value="mod.className" v-model="selectedModules" @change="onModuleSelectionChange" />
+                <span>{{ mod.name }} <span style="color:var(--text-muted);font-size:11px;">({{ moduleApiCount(mod) }})</span></span>
               </label>
             </div>
             <div v-if="matchingModules.length > selectableModules.length" style="margin-top:6px;font-size:11px;color:var(--text-muted);">
@@ -217,7 +217,7 @@
                   <ChevronRight :size="14" :class="{'chevron-expanded': expandedModules.has(mod.className)}" />
                   <span class="api-module-index">{{ modIdx + 1 }}</span>
                   <span class="api-module-name">{{ formatModuleName(mod.name) }}</span>
-                  <span class="badge badge-primary">{{ mod.apis.length }}</span>
+                  <span class="badge badge-primary">{{ moduleApiCount(mod) }}</span>
                 </div>
                 <span v-if="mod.file" style="font-size:11px;color:var(--text-muted);">{{ mod.file }}</span>
               </div>
@@ -285,12 +285,12 @@
                             </tbody>
                           </table>
                         </div>
-                        <div v-if="api.requestBody && api.requestBody.fields.length > 0" class="detail-section">
+                        <div v-if="api.requestBody && bodyFields(api.requestBody).length > 0" class="detail-section">
                           <div class="detail-label">请求体 ({{ api.requestBody.type }})</div>
                           <table class="detail-table">
                             <thead><tr><th>参数名</th><th>类型</th><th>必须</th><th>说明</th></tr></thead>
                             <tbody>
-                              <tr v-for="f in api.requestBody.fields" :key="f.name">
+                              <tr v-for="f in bodyFields(api.requestBody)" :key="f.name">
                                 <td><code>{{ f.name }}</code></td>
                                 <td>{{ f.type }}</td>
                                 <td><span :class="f.required ? 'tag-required' : 'tag-optional'">{{ f.required ? '是' : '否' }}</span></td>
@@ -308,12 +308,12 @@
                       </template>
 
                       <!-- 返回数据 -->
-                      <div v-if="dm.id === 'response' && api.response && api.response.fields.length > 0" class="detail-section">
+                      <div v-if="dm.id === 'response' && api.response && bodyFields(api.response).length > 0" class="detail-section">
                         <div class="detail-label">返回数据 ({{ api.response.type }})</div>
                         <table class="detail-table">
                           <thead><tr><th>参数名</th><th>类型</th><th>说明</th></tr></thead>
                           <tbody>
-                            <tr v-for="f in api.response.fields" :key="f.name">
+                            <tr v-for="f in bodyFields(api.response)" :key="f.name">
                               <td><code>{{ f.name }}</code></td>
                               <td>{{ f.type }}</td>
                               <td>
@@ -329,19 +329,28 @@
                       </div>
 
                       <!-- 请求示例 -->
-                      <div v-if="dm.id === 'requestExample' && api.requestBody && api.requestBody.example" class="detail-section">
+                      <div v-if="dm.id === 'requestExample' && api.requestBody && bodyExample(api.requestBody)" class="detail-section">
                         <div class="detail-label">请求示例</div>
-                        <pre class="detail-json">{{ JSON.stringify(api.requestBody.example, null, 2) }}</pre>
+                        <pre class="detail-json">{{ bodyExampleJson(api.requestBody) }}</pre>
                       </div>
 
                       <!-- 返回示例 -->
-                      <div v-if="dm.id === 'responseExample' && api.response && api.response.example" class="detail-section">
+                      <div v-if="dm.id === 'responseExample' && api.response && bodyExample(api.response)" class="detail-section">
                         <div class="detail-label">返回示例</div>
-                        <pre class="detail-json">{{ JSON.stringify(api.response.example, null, 2) }}</pre>
+                        <pre class="detail-json">{{ bodyExampleJson(api.response) }}</pre>
                       </div>
                     </template>
                   </div>
                 </div>
+                <button
+                  v-if="diskBacked && mod.apis.length < moduleApiCount(mod)"
+                  class="btn btn-secondary btn-sm"
+                  style="width:100%;margin:8px 0;"
+                  :disabled="mod._loading"
+                  @click="loadMoreModuleApis(mod)"
+                >
+                  {{ mod._loading ? '加载中...' : `继续加载（${mod.apis.length}/${moduleApiCount(mod)}）` }}
+                </button>
               </div>
             </div>
             <button
@@ -403,25 +412,25 @@
                       </div>
                     </template>
                     <template v-if="dm.id === 'response'">
-                      <div v-if="api.response && api.response.fields.length > 0" class="detail-section">
+                      <div v-if="api.response && bodyFields(api.response).length > 0" class="detail-section">
                         <div class="detail-label">返回数据 ({{ api.response.type }})</div>
                         <table class="detail-table">
                           <thead><tr><th>参数名</th><th>类型</th><th>说明</th></tr></thead>
                           <tbody>
-                            <tr v-for="f in api.response.fields" :key="f.name">
+                            <tr v-for="f in bodyFields(api.response)" :key="f.name">
                               <td><code>{{ f.name }}</code></td><td>{{ f.type }}</td><td>{{ f.description || '-' }}</td>
                             </tr>
                           </tbody>
                         </table>
                       </div>
                     </template>
-                    <div v-if="dm.id === 'requestExample' && api.requestBody && api.requestBody.example" class="detail-section">
+                    <div v-if="dm.id === 'requestExample' && api.requestBody && bodyExample(api.requestBody)" class="detail-section">
                       <div class="detail-label">请求示例</div>
-                      <pre class="detail-json">{{ JSON.stringify(api.requestBody.example, null, 2) }}</pre>
+                      <pre class="detail-json">{{ bodyExampleJson(api.requestBody) }}</pre>
                     </div>
-                    <div v-if="dm.id === 'responseExample' && api.response && api.response.example" class="detail-section">
+                    <div v-if="dm.id === 'responseExample' && api.response && bodyExample(api.response)" class="detail-section">
                       <div class="detail-label">返回示例</div>
-                      <pre class="detail-json">{{ JSON.stringify(api.response.example, null, 2) }}</pre>
+                      <pre class="detail-json">{{ bodyExampleJson(api.response) }}</pre>
                     </div>
                   </template>
                 </div>
@@ -431,9 +440,10 @@
               v-if="!groupByController && flatApis.length < filteredApis"
               class="btn btn-secondary btn-sm"
               style="width:100%;margin-top:8px;"
-              @click="visibleApiCount += apiPageSize"
+              :disabled="flatLoading"
+              @click="loadMoreFlatApis"
             >
-              继续加载（已显示 {{ flatApis.length }}/{{ filteredApis }} 个接口）
+              {{ flatLoading ? '加载中...' : `继续加载（已显示 ${flatApis.length}/${filteredApis} 个接口）` }}
             </button>
 
           </div>
@@ -449,11 +459,17 @@ import { invoke } from '@tauri-apps/api/core'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { writeFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import { detectProjectLanguage, parseProject } from '../core/api-doc/parser-registry.js'
-import { isPlaceholder } from '../core/api-doc/spring-boot-parser.js'
+import { createSpringBootParseSession, isPlaceholder } from '../core/api-doc/spring-boot-parser.js'
+import { buildTypeIndex } from '../core/api-doc/java-type-resolver.js'
 import { renderMarkdown, renderDocx, DEFAULT_DOC_MODULES } from '../core/api-doc/api-doc-renderer.js'
 import { loadProviderConfigs, loadActiveSelection, fillApiDocPlaceholders, createAiController, getResolvedConfig } from '../core/llm/llm-service.js'
 import { saveRecentProject, getRecentProjects, getSetting, setSetting } from '../core/db.js'
 import { apiArtifact, modelSnapshot, saveHistoryRecord } from '../core/generation-history.js'
+import { createApiSchemaAccessor } from '../core/api-doc/api-schema-accessor.js'
+import {
+  appendApiDocModules, createApiDocJob, finishApiDocJob, getApiDocJob,
+  groupStoredApis, listApiDocModules, queryApiDocApis, updateApiDocApis,
+} from '../core/api-doc/api-doc-store.js'
 import GuideTour from '../components/GuideTour.vue'
 import {
   FolderOpen, Search, X, Lightbulb, Check, FileDown, FileText,
@@ -462,6 +478,65 @@ import {
 
 const MAX_API_SOURCE_FILE_BYTES = 5 * 1024 * 1024
 const API_READ_BATCH_SIZE = 25
+const MAX_WORD_APIS_PER_FILE = 300
+const MAX_MARKDOWN_APIS_PER_FILE = 1500
+const MODULE_API_PAGE_SIZE = 200
+
+function splitModulesByApiLimit(modules, maxApis) {
+  const parts = []
+  let current = []
+  let currentCount = 0
+  const flush = () => {
+    if (current.length > 0) parts.push(current)
+    current = []
+    currentCount = 0
+  }
+
+  for (const mod of modules) {
+    for (let offset = 0; offset < mod.apis.length; offset += maxApis) {
+      const apiSlice = mod.apis.slice(offset, offset + maxApis)
+      if (currentCount > 0 && currentCount + apiSlice.length > maxApis) flush()
+      current.push(apiSlice.length === mod.apis.length ? mod : {
+        ...mod,
+        className: `${mod.className}__part_${Math.floor(offset / maxApis) + 1}`,
+        name: `${mod.name}（续）`,
+        apis: apiSlice,
+      })
+      currentCount += apiSlice.length
+      if (currentCount >= maxApis) flush()
+    }
+  }
+  flush()
+  return parts
+}
+
+function buildPartPath(path, index, total) {
+  if (total <= 1) return path
+  const dot = path.lastIndexOf('.')
+  const suffix = `-part-${String(index + 1).padStart(2, '0')}`
+  return dot > 0 ? `${path.slice(0, dot)}${suffix}${path.slice(dot)}` : `${path}${suffix}`
+}
+
+function memorySuffix() {
+  const memory = typeof performance !== 'undefined' ? performance.memory : null
+  if (!memory?.usedJSHeapSize) return ''
+  return `，JS 堆 ${(memory.usedJSHeapSize / 1024 / 1024).toFixed(0)}/${(memory.jsHeapSizeLimit / 1024 / 1024).toFixed(0)} MB`
+}
+
+function compactSchemaStats(result) {
+  const seenFieldLists = new Set()
+  let fieldCount = 0
+  for (const mod of result?.modules || []) {
+    for (const api of mod.apis || []) {
+      for (const body of [api.requestBody, api.response]) {
+        if (!Array.isArray(body?.fields) || seenFieldLists.has(body.fields)) continue
+        seenFieldLists.add(body.fields)
+        fieldCount += body.fields.length
+      }
+    }
+  }
+  return { schemaCount: seenFieldLists.size, fieldCount }
+}
 
 export default {
   name: 'ApiDocGenerator',
@@ -480,6 +555,12 @@ export default {
       parsePercent: 0,
       parseLogs: [],
       parseResult: null,
+      apiDocJobId: null,
+      diskBacked: false,
+      schemaAccessor: null,
+      flatApiRows: [],
+      flatLoading: false,
+      flatLoadToken: 0,
       selectedModules: [],
       moduleSearch: '',
       moduleSelectorLimit: 300,
@@ -494,6 +575,7 @@ export default {
       showModulePath: false,
       customPrefix: '',
       aiProcessing: false,
+      exporting: false,
       aiProgressText: '',
       aiLogs: [],
       aiController: null,
@@ -520,15 +602,18 @@ export default {
   computed: {
     totalApis() {
       if (!this.parseResult) return 0
-      return this.parseResult.modules.reduce((s, m) => s + m.apis.length, 0)
+      return this.parseResult.modules.reduce((s, m) => s + this.moduleApiCount(m), 0)
     },
     currentProviderModels() {
       const p = this.globalStore.providerConfigs.find(p => p.id === this.selectedProviderId)
       return p ? p.models : []
     },
+    selectedModuleSet() {
+      return new Set(this.selectedModules)
+    },
     filteredModules() {
       if (!this.parseResult) return []
-      return this.parseResult.modules.filter(m => this.selectedModules.includes(m.className))
+      return this.parseResult.modules.filter(m => this.selectedModuleSet.has(m.className))
     },
     matchingModules() {
       if (!this.parseResult) return []
@@ -542,13 +627,19 @@ export default {
       return this.matchingModules.slice(0, this.moduleSelectorLimit)
     },
     filteredApis() {
-      return this.filteredModules.reduce((s, m) => s + m.apis.length, 0)
+      return this.filteredModules.reduce((s, m) => s + this.moduleApiCount(m), 0)
     },
     methodStats() {
       const stats = {}
       for (const mod of this.filteredModules) {
-        for (const api of mod.apis) {
-          stats[api.method] = (stats[api.method] || 0) + 1
+        if (this.diskBacked && mod.methodStats) {
+          for (const [method, count] of Object.entries(mod.methodStats)) {
+            stats[method] = (stats[method] || 0) + Number(count || 0)
+          }
+        } else {
+          for (const api of mod.apis) {
+            stats[api.method] = (stats[api.method] || 0) + 1
+          }
         }
       }
       return stats
@@ -584,6 +675,13 @@ export default {
       const stripPath = (name) => {
         if (this.showModulePath) return name
         return name.replace(/^\[.*?\]\s*/, '')
+      }
+      if (this.diskBacked) {
+        return this.flatApiRows.map(api => ({
+          ...api,
+          displayPath: addPrefix(api.path),
+          _fromModule: stripPath(api._moduleName),
+        }))
       }
       const allApis = []
       let reachedLimit = false
@@ -622,19 +720,31 @@ export default {
       this.projectDir = dir
       saveRecentProject(dir, 'api-doc').catch(() => {})
       this.parseResult = null
+      this.apiDocJobId = null
+      this.diskBacked = false
+      this.schemaAccessor = null
       this.selectedModules = []
+      this.flatApiRows = []
       await this.detectLanguage()
     },
     clearProject() {
       this.projectDir = ''
       this.detectedLang = null
       this.parseResult = null
+      this.apiDocJobId = null
+      this.diskBacked = false
+      this.schemaAccessor = null
       this.selectedModules = []
+      this.flatApiRows = []
     },
     useRecentDir(path) {
       this.projectDir = path
       this.parseResult = null
+      this.apiDocJobId = null
+      this.diskBacked = false
+      this.schemaAccessor = null
       this.selectedModules = []
+      this.flatApiRows = []
       this.detectLanguage()
     },
 
@@ -673,7 +783,11 @@ export default {
     async startParsing() {
       if (!this.projectDir || !this.detectedLang) return
       this.parseResult = null
+      this.apiDocJobId = null
+      this.diskBacked = false
+      this.schemaAccessor = null
       this.selectedModules = []
+      this.flatApiRows = []
       this.expandedModules = new Set()
       this.expandedApis = new Set()
       this.moduleSearch = ''
@@ -715,10 +829,18 @@ export default {
         }
 
         this.addLog(`发现 ${sourceFiles.length} 个 ${ext} 文件`)
+        const sourceBytes = sourceFiles.reduce((sum, file) => sum + Number(file.size || 0), 0)
+        this.addLog(`源码总量 ${(sourceBytes / 1024 / 1024).toFixed(1)} MB${memorySuffix()}`)
         if (oversizedSourceFiles > 0) {
           this.addLog(`[稳定性限流] 已跳过 ${oversizedSourceFiles} 个超过 5MB 的超大源码文件`)
         }
         this.parsePercent = 5
+
+        if (lang.id === 'spring-boot') {
+          await this.parseSpringBootToStore(sourceFiles, sourceBytes, lang)
+          this.parsing = false
+          return
+        }
 
         // 2. 分批读取内容
         const allFiles = []
@@ -749,6 +871,7 @@ export default {
         }
 
         this.addLog(`文件读取完成，共 ${allFiles.length} 个有效文件`)
+        this.addLog(`准备构建紧凑类型索引${memorySuffix()}`)
 
         // 3. 动态调度对应解析器
         await new Promise(r => setTimeout(r, 50))
@@ -768,16 +891,24 @@ export default {
         // 解析完成后立即释放源码字符串，避免和解析结果、历史快照同时占用内存。
         allFiles.length = 0
         this.parseResult = markRaw(result)
+        this.schemaAccessor = markRaw(createApiSchemaAccessor(result, { maxExampleCache: 120 }))
         this.selectedModules = result.modules.map(m => m.className)
 
-        if (result.modules.length > 0) {
+        const apiCount = result.modules.reduce((s, m) => s + m.apis.length, 0)
+        if (result.modules.length > 0 && apiCount <= 2000) {
           this.expandedModules = new Set([result.modules[0].className])
+        } else {
+          this.expandedModules = new Set()
         }
 
-        const apiCount = result.modules.reduce((s, m) => s + m.apis.length, 0)
+        const schemaStats = compactSchemaStats(result)
         this.parsePercent = 100
         this.parseProgress = '解析完成'
         this.addLog(`[完成] 解析完成！${result.modules.length} 个模块，${apiCount} 个接口`)
+        this.addLog(`[内存优化] ${schemaStats.schemaCount} 份共享类型结构、${schemaStats.fieldCount} 个字段；示例改为按需生成${memorySuffix()}`)
+        if (apiCount > 2000) {
+          this.addLog('[大项目模式] 默认折叠全部模块，展开时再渲染接口详情')
+        }
         await saveHistoryRecord({
           type: 'api-doc',
           title: `${this.projectDir.split(/[/\\]/).pop() || '项目'} 接口文档`,
@@ -811,6 +942,167 @@ export default {
       this.parsing = false
     },
 
+    async parseSpringBootToStore(sourceFiles, sourceBytes, lang) {
+      let jobId = null
+      let session = null
+      try {
+        jobId = await createApiDocJob(
+          this.projectDir,
+          lang.id,
+          sourceFiles.length,
+          sourceBytes,
+        )
+        this.apiDocJobId = jobId
+        this.diskBacked = true
+        this.addLog(`[磁盘缓存] 已创建任务 ${jobId}，SQLite WAL + 单写/多读连接池`)
+
+        // 第一遍只构建紧凑类型索引，并记录 Controller 路径；源码按批次立即释放。
+        const typeIndex = new Map()
+        const controllerFiles = []
+        for (let i = 0; i < sourceFiles.length; i += API_READ_BATCH_SIZE) {
+          const batch = sourceFiles.slice(i, i + API_READ_BATCH_SIZE)
+          const readResult = await invoke('read_files_content', {
+            files: batch.map(file => ({
+              path: file.path,
+              relative_path: file.relative_path,
+              name: file.name,
+              ext: file.ext,
+            })),
+          })
+          const loadedFiles = []
+          for (const file of readResult.files) {
+            if (file.error || !file.content) continue
+            loadedFiles.push({
+              name: file.name,
+              relative_path: file.relative_path,
+              content: file.content,
+            })
+            if (/@(?:Rest)?Controller\b/.test(file.content)) {
+              controllerFiles.push({
+                path: file.path,
+                relative_path: file.relative_path,
+                name: file.name,
+                ext: file.ext,
+              })
+            }
+          }
+          buildTypeIndex(loadedFiles, typeIndex)
+          for (const file of loadedFiles) file.content = ''
+
+          const loaded = Math.min(i + API_READ_BATCH_SIZE, sourceFiles.length)
+          this.parsePercent = 5 + Math.round((loaded / sourceFiles.length) * 35)
+          this.parseProgress = `构建类型索引 (${loaded}/${sourceFiles.length})`
+          if (loaded === sourceFiles.length || loaded % 250 === 0) {
+            this.addLog(`类型索引 ${loaded}/${sourceFiles.length}，${typeIndex.size} 个类型${memorySuffix()}`)
+          }
+          await new Promise(resolve => setTimeout(resolve, 0))
+        }
+
+        this.addLog(`[流式解析] 第一遍完成：${typeIndex.size} 个类型，${controllerFiles.length} 个 Controller`)
+        session = createSpringBootParseSession(typeIndex)
+        const schemaStats = new Map()
+
+        // 第二遍只重读 Controller；解析一批、事务写入一批，然后释放该批对象。
+        for (let i = 0; i < controllerFiles.length; i += API_READ_BATCH_SIZE) {
+          const batch = controllerFiles.slice(i, i + API_READ_BATCH_SIZE)
+          const readResult = await invoke('read_files_content', { files: batch })
+          const loadedControllers = readResult.files
+            .filter(file => !file.error && file.content)
+            .map(file => ({
+              name: file.name,
+              relative_path: file.relative_path,
+              content: file.content,
+            }))
+          const modules = await session.parseControllers(loadedControllers, {
+            onWarning: (file, error) => this.addLog(`[警告] ${file.name}: ${error.message}`),
+          })
+
+          for (const module of modules) {
+            for (const api of module.apis) {
+              for (const body of [api.requestBody, api.response]) {
+                if (body?.type && !schemaStats.has(body.type)) {
+                  schemaStats.set(body.type, body.fields?.length || 0)
+                }
+              }
+            }
+          }
+
+          await appendApiDocModules(
+            jobId,
+            modules,
+            sourceFiles.length,
+          )
+
+          const parsed = Math.min(i + API_READ_BATCH_SIZE, controllerFiles.length)
+          this.parsePercent = 40 + Math.round((parsed / Math.max(1, controllerFiles.length)) * 55)
+          this.parseProgress = `解析并写入接口 (${parsed}/${controllerFiles.length})`
+          this.addLog(`已解析并入库 Controller ${parsed}/${controllerFiles.length}`)
+          modules.length = 0
+          await new Promise(resolve => setTimeout(resolve, 0))
+        }
+
+        await finishApiDocJob(jobId, 'completed')
+        const [job, modules] = await Promise.all([
+          getApiDocJob(jobId),
+          listApiDocModules(jobId),
+        ])
+        if (!job) throw new Error('接口文档任务写入后无法读取')
+
+        this.parseResult = { modules }
+        this.schemaAccessor = markRaw(createApiSchemaAccessor(this.parseResult, { maxExampleCache: 80 }))
+        this.selectedModules = modules.map(module => module.className)
+        this.expandedModules = new Set()
+        this.expandedApis = new Set()
+        this.flatApiRows = []
+
+        if (job.apiCount <= 2000 && modules.length > 0) {
+          this.expandedModules = new Set([modules[0].className])
+          await this.loadMoreModuleApis(this.parseResult.modules[0])
+        }
+
+        this.parsePercent = 100
+        this.parseProgress = '解析完成'
+        const fieldCount = [...schemaStats.values()].reduce((sum, count) => sum + count, 0)
+        this.addLog(`[完成] ${job.moduleCount} 个模块，${job.apiCount} 个接口`)
+        this.addLog(`[磁盘模式] ${schemaStats.size} 份共享结构、${fieldCount} 个字段；WebView 仅保留已展开页面${memorySuffix()}`)
+        if (job.apiCount > 2000) {
+          this.addLog('[大项目模式] 接口详情按页从 SQLite 读取，折叠后释放页面缓存')
+        }
+
+        await saveHistoryRecord({
+          type: 'api-doc',
+          title: `${this.projectDir.split(/[/\\]/).pop() || '项目'} 接口文档`,
+          summary: `${job.moduleCount} 个模块，${job.apiCount} 个接口`,
+          source: {
+            projectDir: this.projectDir,
+            language: lang,
+            sourceFileCount: sourceFiles.length,
+            parsedFileCount: sourceFiles.length,
+            apiDocJobId: jobId,
+          },
+          settings: {
+            customPrefix: this.customPrefix,
+            groupByController: this.groupByController,
+            showModulePath: this.showModulePath,
+            docModules: this.docModules,
+          },
+          result: {
+            moduleCount: job.moduleCount,
+            apiCount: job.apiCount,
+            selectedModules: this.selectedModules,
+            diskBacked: true,
+          },
+          artifact: apiArtifact(this.parseResult, this.docModules),
+        })
+        this.showToast(`解析完成！发现 ${job.moduleCount} 个模块，${job.apiCount} 个接口`, 'success')
+      } catch (error) {
+        if (jobId) await finishApiDocJob(jobId, 'failed', String(error)).catch(() => {})
+        throw error
+      } finally {
+        session?.dispose()
+      }
+    },
+
 
 
     addLog(msg) {
@@ -820,20 +1112,89 @@ export default {
     },
 
     // ===== 模块筛选 =====
+    moduleApiCount(module) {
+      return Number(module?.apiCount ?? module?.apis?.length ?? 0)
+    },
     selectAllModules() {
       if (this.parseResult) {
         this.selectedModules = this.parseResult.modules.map(m => m.className)
+        this.onModuleSelectionChange()
       }
     },
     deselectAllModules() {
       this.selectedModules = []
+      this.onModuleSelectionChange()
+    },
+    onModuleSelectionChange() {
+      if (this.diskBacked && !this.groupByController) this.loadFlatApiPage(true)
+    },
+    onGroupModeChange() {
+      this.expandedApis = new Set()
+      if (this.diskBacked && !this.groupByController) this.loadFlatApiPage(true)
+    },
+    async loadFlatApiPage(reset = false) {
+      if (!this.diskBacked || !this.apiDocJobId || this.flatLoading) return
+      const token = ++this.flatLoadToken
+      if (reset) this.flatApiRows = []
+      if (this.selectedModules.length === 0) return
+      this.flatLoading = true
+      try {
+        const page = await queryApiDocApis(this.apiDocJobId, {
+          classNames: this.selectedModules,
+          limit: this.apiPageSize,
+          offset: this.flatApiRows.length,
+        })
+        if (token !== this.flatLoadToken) return
+        this.flatApiRows.push(...page.items)
+        this.visibleApiCount = this.flatApiRows.length
+      } catch (error) {
+        this.showToast('接口分页读取失败: ' + String(error), 'error')
+      } finally {
+        if (token === this.flatLoadToken) this.flatLoading = false
+      }
+    },
+    async loadMoreFlatApis() {
+      await this.loadFlatApiPage(false)
     },
 
     // ===== 展开/折叠 =====
-    toggleModuleExpand(className) {
+    async toggleModuleExpand(className) {
       const s = new Set(this.expandedModules)
-      s.has(className) ? s.delete(className) : s.add(className)
+      const opening = !s.has(className)
+      opening ? s.add(className) : s.delete(className)
       this.expandedModules = s
+      if (!this.diskBacked) return
+      const module = this.parseResult?.modules.find(item => item.className === className)
+      if (!module) return
+      if (opening) {
+        await this.loadMoreModuleApis(module)
+      } else {
+        // 完整结果已在 SQLite，折叠即可释放 WebView 中的详情对象。
+        module.apis.splice(0, module.apis.length)
+        module._loaded = false
+        this.expandedApis = new Set([...this.expandedApis].filter(key => !key.startsWith(`${className}.`)))
+      }
+    },
+    async loadMoreModuleApis(module) {
+      if (!this.diskBacked || !this.apiDocJobId || !module || module._loading) return
+      if (module.apis.length >= this.moduleApiCount(module)) {
+        module._loaded = true
+        return
+      }
+      module._loading = true
+      try {
+        const page = await queryApiDocApis(this.apiDocJobId, {
+          moduleId: module.id,
+          limit: MODULE_API_PAGE_SIZE,
+          offset: module.apis.length,
+        })
+        module.apis.push(...page.items)
+        module._loaded = module.apis.length >= this.moduleApiCount(module)
+      } catch (error) {
+        this.showToast(`读取 ${module.name} 失败: ${String(error)}`, 'error')
+      } finally {
+        module._loading = false
+      }
     },
     toggleApiExpand(key) {
       const s = new Set(this.expandedApis)
@@ -853,6 +1214,17 @@ export default {
       return (prefix + normalizedPath).replace(/\/+/g, '/')
     },
 
+    bodyFields(body) {
+      return this.schemaAccessor?.getFields(body) || body?.fields || []
+    },
+    bodyExample(body) {
+      return this.schemaAccessor?.getExample(body) ?? body?.example ?? null
+    },
+    bodyExampleJson(body) {
+      const example = this.bodyExample(body)
+      return example == null ? '' : JSON.stringify(example, null, 2)
+    },
+
     // ===== 文档模块排序 =====
     moveModule(idx, direction) {
       const newIdx = idx + direction
@@ -866,7 +1238,7 @@ export default {
 
     // ===== 导出 =====
     async exportMarkdown() {
-      if (!this.parseResult) return
+      if (!this.parseResult || this.exporting) return
       const path = await save({
         title: '导出 Markdown',
         defaultPath: '接口文档.md',
@@ -874,14 +1246,43 @@ export default {
       })
       if (!path) return
 
-      const filtered = { modules: this.filteredModules }
-      const md = renderMarkdown(filtered, this.docModules)
-      await writeTextFile(path, md)
-      this.showToast('Markdown 文档已导出', 'success')
+      this.exporting = true
+      try {
+        if (this.diskBacked) {
+          const total = this.filteredApis
+          if (total === 0) throw new Error('请至少选择一个包含接口的模块')
+          const partCount = Math.ceil(total / MAX_MARKDOWN_APIS_PER_FILE)
+          for (let i = 0; i < partCount; i++) {
+            const page = await queryApiDocApis(this.apiDocJobId, {
+              classNames: this.selectedModules,
+              limit: MAX_MARKDOWN_APIS_PER_FILE,
+              offset: i * MAX_MARKDOWN_APIS_PER_FILE,
+            })
+            const md = renderMarkdown({ modules: groupStoredApis(page.items) }, this.docModules)
+            await writeTextFile(buildPartPath(path, i, partCount), md)
+            this.addLog(`Markdown 导出 ${i + 1}/${partCount}`)
+            await new Promise(resolve => setTimeout(resolve, 0))
+          }
+          this.showToast(partCount > 1 ? `Markdown 已分为 ${partCount} 个文件导出` : 'Markdown 文档已导出', 'success')
+          return
+        }
+        const parts = splitModulesByApiLimit(this.filteredModules, MAX_MARKDOWN_APIS_PER_FILE)
+        for (let i = 0; i < parts.length; i++) {
+          const filtered = { modules: parts[i], typeIndex: this.parseResult.typeIndex }
+          const md = renderMarkdown(filtered, this.docModules)
+          await writeTextFile(buildPartPath(path, i, parts.length), md)
+          await new Promise(resolve => setTimeout(resolve, 0))
+        }
+        this.showToast(parts.length > 1 ? `Markdown 已分为 ${parts.length} 个文件导出` : 'Markdown 文档已导出', 'success')
+      } catch (e) {
+        this.showToast('Markdown 导出失败: ' + String(e), 'error')
+      } finally {
+        this.exporting = false
+      }
     },
 
     async exportWord() {
-      if (!this.parseResult) return
+      if (!this.parseResult || this.exporting) return
       const path = await save({
         title: '导出 Word 文档',
         defaultPath: '接口文档.docx',
@@ -890,12 +1291,37 @@ export default {
       if (!path) return
 
       try {
-        const filtered = { modules: this.filteredModules }
-        const buffer = await renderDocx(filtered, this.docModules)
-        await writeFile(path, buffer)
-        this.showToast('Word 文档已导出', 'success')
+        this.exporting = true
+        if (this.diskBacked) {
+          const total = this.filteredApis
+          if (total === 0) throw new Error('请至少选择一个包含接口的模块')
+          const partCount = Math.ceil(total / MAX_WORD_APIS_PER_FILE)
+          for (let i = 0; i < partCount; i++) {
+            const page = await queryApiDocApis(this.apiDocJobId, {
+              classNames: this.selectedModules,
+              limit: MAX_WORD_APIS_PER_FILE,
+              offset: i * MAX_WORD_APIS_PER_FILE,
+            })
+            const buffer = await renderDocx({ modules: groupStoredApis(page.items) }, this.docModules)
+            await writeFile(buildPartPath(path, i, partCount), buffer)
+            this.addLog(`Word 导出 ${i + 1}/${partCount}`)
+            await new Promise(resolve => setTimeout(resolve, 0))
+          }
+          this.showToast(partCount > 1 ? `Word 已分为 ${partCount} 个文件导出` : 'Word 文档已导出', 'success')
+          return
+        }
+        const parts = splitModulesByApiLimit(this.filteredModules, MAX_WORD_APIS_PER_FILE)
+        for (let i = 0; i < parts.length; i++) {
+          const filtered = { modules: parts[i], typeIndex: this.parseResult.typeIndex }
+          const buffer = await renderDocx(filtered, this.docModules)
+          await writeFile(buildPartPath(path, i, parts.length), buffer)
+          await new Promise(resolve => setTimeout(resolve, 0))
+        }
+        this.showToast(parts.length > 1 ? `Word 已分为 ${parts.length} 个文件导出` : 'Word 文档已导出', 'success')
       } catch (e) {
         this.showToast('Word 导出失败: ' + String(e), 'error')
+      } finally {
+        this.exporting = false
       }
     },
 
@@ -904,17 +1330,27 @@ export default {
       return isPlaceholder(text)
     },
 
-    onApiDescEdit(api, event) {
+    async onApiDescEdit(api, event) {
       const newText = event.target.innerText.trim()
       if (newText && newText !== api.description) {
         api.description = newText
+        if (this.diskBacked) {
+          await updateApiDocApis(this.apiDocJobId, [api]).catch(error => {
+            this.showToast('接口说明保存失败: ' + String(error), 'error')
+          })
+        }
       }
     },
 
-    onFieldDescEdit(api, section, event, field) {
+    async onFieldDescEdit(api, section, event, field) {
       const newText = event.target.innerText.trim()
       if (newText && newText !== field.description) {
         field.description = newText
+        if (this.diskBacked) {
+          await updateApiDocApis(this.apiDocJobId, [api]).catch(error => {
+            this.showToast('字段说明保存失败: ' + String(error), 'error')
+          })
+        }
       }
     },
 
@@ -929,6 +1365,52 @@ export default {
       if (p && p.models.length > 0) {
         this.selectedModelId = p.activeModelId || p.models[0].id
       }
+    },
+
+    async fillStoredApiDocs(config, controller) {
+      const chunkSize = 80
+      let totalFilled = 0
+      let totalItems = 0
+      for (let offset = 0; offset < this.totalApis; offset += chunkSize) {
+        if (controller.cancelled) break
+        if (controller.paused) {
+          await controller.waitIfPaused()
+          if (controller.cancelled) break
+        }
+        const page = await queryApiDocApis(this.apiDocJobId, {
+          limit: chunkSize,
+          offset,
+        })
+        if (page.items.length === 0) break
+        const chunkResult = { modules: groupStoredApis(page.items) }
+        this.aiProgressText = `按页补充 ${Math.min(offset + page.items.length, this.totalApis)}/${this.totalApis}`
+        const result = await fillApiDocPlaceholders(
+          config,
+          chunkResult,
+          (msg, level) => this.addAiLog(`[${Math.floor(offset / chunkSize) + 1}] ${msg}`, level),
+          () => {},
+          controller,
+        )
+        totalFilled += result.filled || 0
+        totalItems += result.total || 0
+        await updateApiDocApis(this.apiDocJobId, page.items)
+        await new Promise(resolve => setTimeout(resolve, 0))
+      }
+
+      // 清理旧页面并按需重读，保证 AI 写入后的内容与 SQLite 一致。
+      const expanded = new Set(this.expandedModules)
+      for (const module of this.parseResult.modules) {
+        if (module.apis.length > 0) module.apis.splice(0, module.apis.length)
+        module._loaded = false
+      }
+      if (this.groupByController) {
+        for (const module of this.parseResult.modules) {
+          if (expanded.has(module.className)) await this.loadMoreModuleApis(module)
+        }
+      } else {
+        await this.loadFlatApiPage(true)
+      }
+      return { filled: totalFilled, total: totalItems, cancelled: controller.cancelled }
     },
 
     async startAiFill() {
@@ -959,18 +1441,20 @@ export default {
       this.addAiLog(`开始 AI 补充，使用 ${provider.label} / ${modelLabel}`, 'info')
 
       try {
-        const result = await fillApiDocPlaceholders(
-          config,
-          this.parseResult,
-          (msg, level) => {
-            this.addAiLog(msg, level)
-            this.aiProgressText = msg
-          },
-          (batchName, filled, batchTotal) => {
-            this.parseResult = markRaw({ ...this.parseResult })
-          },
-          controller,
-        )
+        const result = this.diskBacked
+          ? await this.fillStoredApiDocs(config, controller)
+          : await fillApiDocPlaceholders(
+            config,
+            this.parseResult,
+            (msg, level) => {
+              this.addAiLog(msg, level)
+              this.aiProgressText = msg
+            },
+            () => {
+              this.parseResult = markRaw({ ...this.parseResult })
+            },
+            controller,
+          )
 
         if (result.cancelled || controller.cancelled) {
           this.showToast('已停止 AI 补充', 'info')
